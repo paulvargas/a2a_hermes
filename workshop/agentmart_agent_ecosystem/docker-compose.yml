@@ -1,0 +1,49 @@
+services:
+  redis:
+    image: redis:7
+    volumes:
+      - myshopper-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  agentmart-worker:
+    build: .
+    command: ["python", "agentmart_worker.py"]
+    env_file: .env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OPENROUTER_REASONING_EFFORT: default
+    depends_on:
+      - redis
+
+  hermes-web:
+    build: .
+    command: ["python", "hermes_web.py"]
+    env_file: .env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OPENROUTER_REASONING_EFFORT: default
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+
+  hermes-telegram:
+    build: .
+    command: ["python", "hermes_telegram.py"]
+    env_file: .env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OPENROUTER_REASONING_EFFORT: default
+    depends_on:
+      - redis
+    profiles: ["telegram"]
+
+volumes:
+  myshopper-redis-data:

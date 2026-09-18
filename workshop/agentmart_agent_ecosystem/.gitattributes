@@ -1,0 +1,6 @@
+
+# Force LF line endings for the shell entrypoint regardless of the checkout
+# platform's core.autocrlf. On Windows (core.autocrlf=true) this file would
+# otherwise check out with CRLF, and `sh entrypoint.sh` in the Linux
+# container chokes on the trailing \r (e.g. "$'\r': command not found").
+entrypoint.sh text eol=lf
