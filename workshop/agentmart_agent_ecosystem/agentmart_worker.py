@@ -50,7 +50,7 @@ def handle_request(env, bus, dry_run=True):
             # Publish only the hops appended since the previous superstep, so each
             # agent's envelopes reach Redis as soon as that agent finishes.
             for hop in hops[seen:]:
-                bus.publish(bus.RESPONSES, _env("in_progress", hop.get("sender", "agentmart"),
+                bus.publish(bus.RESPONSES, _env(hop.get("state", "in_progress"), hop.get("sender", "agentmart"),
                             hop.get("recipient", "hermes"), intent, hop, cid, env["task_id"],
                             metrics=hop.get("metrics")))
             seen = len(hops)
