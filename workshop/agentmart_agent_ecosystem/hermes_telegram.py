@@ -16,6 +16,7 @@ free to keep answering other chats/callbacks meanwhile.
 import asyncio
 import logging
 import os
+import uuid
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -33,6 +34,31 @@ logger = logging.getLogger("hermes.telegram")
 DEFAULT_CUSTOMER_ID = "AM-CUST-0001"
 _CB_PREFIX = "hitl"
 _TERMINAL_STATES = ("completed", "failed")
+_PENDING_KEY = "pending_confirmations"
+
+
+def _stash_confirmation(bot_data: dict, cid, task_id) -> str:
+    """Store a pending (cid, task_id) pair under a short token and return it.
+
+    Telegram caps InlineKeyboardButton.callback_data at 64 bytes; cid and
+    task_id are UUID4s (36 chars each), so embedding both directly (e.g.
+    "hitl:{cid}:{task_id}:1") runs ~80 bytes and Telegram rejects the
+    sendMessage outright (BadRequest: Button_data_invalid). Keeping only a
+    short key in callback_data and the real ids in bot_data keeps every
+    button well under the limit.
+    """
+    pending = bot_data.setdefault(_PENDING_KEY, {})
+    key = uuid.uuid4().hex[:8]
+    while key in pending:
+        key = uuid.uuid4().hex[:8]
+    pending[key] = (cid, task_id)
+    return key
+
+
+def _pop_confirmation(bot_data: dict, key: str):
+    """Recover and remove a pending (cid, task_id) pair by its short token."""
+    pending = bot_data.get(_PENDING_KEY) or {}
+    return pending.pop(key, None)
 
 
 def _text_from_item(item):
@@ -116,7 +142,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
-async def _handle_envelope(message, core, env: dict, seen_senders: set) -> None:
+async def _handle_envelope(message, core, env: dict, seen_senders: set, bot_data: dict) -> None:
     """React to one streamed envelope: HITL prompt, final reply, failure, or hop note."""
     state = env.get("state")
     payload = env.get("payload") or {}
@@ -130,11 +156,13 @@ async def _handle_envelope(message, core, env: dict, seen_senders: set) -> None:
             or payload.get("reply")
             or "Hermes needs your confirmation before proceeding with this action."
         )
+        approve_key = _stash_confirmation(bot_data, cid, task_id)
+        decline_key = _stash_confirmation(bot_data, cid, task_id)
         keyboard = InlineKeyboardMarkup(
             [
                 [
-                    InlineKeyboardButton("Approve", callback_data=f"{_CB_PREFIX}:{cid}:{task_id}:1"),
-                    InlineKeyboardButton("Decline", callback_data=f"{_CB_PREFIX}:{cid}:{task_id}:0"),
+                    InlineKeyboardButton("Approve", callback_data=f"{_CB_PREFIX}:{approve_key}:1"),
+                    InlineKeyboardButton("Decline", callback_data=f"{_CB_PREFIX}:{decline_key}:0"),
                 ]
             ]
         )
@@ -169,6 +197,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     cid = core.start_request(text, customer_id=customer_id, channel="telegram")
 
     message = update.message
+    bot_data = context.bot_data
     await message.reply_text("Working on it…")
 
     loop = asyncio.get_running_loop()
@@ -180,7 +209,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if env.get("state") in _TERMINAL_STATES:
                 saw_terminal = True
             asyncio.run_coroutine_threadsafe(
-                _handle_envelope(message, core, env, seen_senders), loop
+                _handle_envelope(message, core, env, seen_senders, bot_data), loop
             ).result()
         if not saw_terminal:
             asyncio.run_coroutine_threadsafe(
@@ -203,9 +232,16 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
 
     try:
-        _prefix, cid, task_id, approved_flag = (query.data or "").split(":", 3)
+        _prefix, short_key, approved_flag = (query.data or "").split(":", 2)
     except ValueError:
         return
+
+    entry = _pop_confirmation(context.bot_data, short_key)
+    if entry is None:
+        # Unknown or already-used token (e.g. stale button after a restart);
+        # nothing left to resolve.
+        return
+    cid, task_id = entry
 
     approved = approved_flag == "1"
     core.confirm(cid, task_id, approved)

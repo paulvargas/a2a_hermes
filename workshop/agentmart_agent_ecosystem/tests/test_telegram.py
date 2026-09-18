@@ -10,6 +10,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from hermes_telegram import (
+    _PENDING_KEY,
     build_application,
     handle_confirmation,
     handle_message,
@@ -133,14 +134,18 @@ def test_handle_message_notes_timeout_when_stream_never_terminates():
 
 
 def test_handle_confirmation_calls_core_confirm_with_parsed_ids():
+    # callback_data only ever carries a short opaque token (see the 64-byte
+    # regression test below); the real cid/task_id live in bot_data, keyed
+    # by that token, exactly as _stash_confirmation would have put them.
     core = FakeCore()
+    context = _fake_context(core)
+    context.bot_data[_PENDING_KEY] = {"shortkey1": ("cid-1", "t1")}
     query = MagicMock()
-    query.data = "hitl:cid-1:t1:1"
+    query.data = "hitl:shortkey1:1"
     query.answer = AsyncMock()
     query.edit_message_text = AsyncMock()
     update = MagicMock()
     update.callback_query = query
-    context = _fake_context(core)
 
     asyncio.run(handle_confirmation(update, context))
 
@@ -151,13 +156,14 @@ def test_handle_confirmation_calls_core_confirm_with_parsed_ids():
 
 def test_handle_confirmation_maps_decline_to_approved_false():
     core = FakeCore()
+    context = _fake_context(core)
+    context.bot_data[_PENDING_KEY] = {"shortkey2": ("cid-2", "t2")}
     query = MagicMock()
-    query.data = "hitl:cid-2:t2:0"
+    query.data = "hitl:shortkey2:0"
     query.answer = AsyncMock()
     query.edit_message_text = AsyncMock()
     update = MagicMock()
     update.callback_query = query
-    context = _fake_context(core)
 
     asyncio.run(handle_confirmation(update, context))
 
@@ -173,6 +179,54 @@ def test_start_command_replies_with_intro():
 
     update.message.reply_text.assert_awaited_once()
     assert "Hermes" in update.message.reply_text.await_args.args[0]
+
+
+def test_input_required_callback_data_stays_under_64_bytes_and_resolves_correctly():
+    """Regression test: Telegram hard-caps InlineKeyboardButton.callback_data
+    at 64 bytes. cid and task_id are UUID4s (36 chars each), so packing both
+    into callback_data (e.g. "hitl:{cid}:{task_id}:1") runs ~80 bytes and
+    Telegram rejects the sendMessage with BadRequest: Button_data_invalid --
+    the user would see a generic error instead of the Approve/Decline
+    buttons. Every button's callback_data must stay within the limit, and a
+    press must still resolve to the correct (cid, task_id) pair."""
+    long_cid = "11111111-1111-4111-8111-111111111111"
+    long_task_id = "22222222-2222-4222-8222-222222222222"
+    core = FakeCore(events=[
+        {"state": "input_required", "correlation_id": long_cid, "task_id": long_task_id,
+         "sender": "order_agent", "payload": {"summary": "Confirm checkout?"}},
+    ])
+    update = _fake_update("checkout")
+    context = _fake_context(core)
+
+    asyncio.run(handle_message(update, context))
+
+    keyboard_calls = [
+        c.kwargs["reply_markup"] for c in update.message.reply_text.await_args_list
+        if "reply_markup" in c.kwargs
+    ]
+    assert keyboard_calls, "expected an inline Approve/Decline keyboard for input_required"
+    markup = keyboard_calls[0]
+    buttons = [btn for row in markup.inline_keyboard for btn in row]
+    assert len(buttons) == 2
+    for btn in buttons:
+        assert len(btn.callback_data.encode("utf-8")) <= 64, (
+            f"callback_data too long: {btn.callback_data!r}"
+        )
+
+    approve_btn = next(b for b in buttons if b.text == "Approve")
+
+    query = MagicMock()
+    query.data = approve_btn.callback_data
+    query.answer = AsyncMock()
+    query.edit_message_text = AsyncMock()
+    cb_update = MagicMock()
+    cb_update.callback_query = query
+
+    # Same `context` (same bot_data) as handle_message used, simulating a
+    # real Application sharing bot_data across handler invocations.
+    asyncio.run(handle_confirmation(cb_update, context))
+
+    assert core.confirm_calls == [(long_cid, long_task_id, True)]
 
 
 def test_build_application_wires_core_and_handlers_without_network():
