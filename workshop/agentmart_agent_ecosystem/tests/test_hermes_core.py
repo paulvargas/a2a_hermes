@@ -5,7 +5,7 @@ from hermes_core import HermesCore
 def test_start_request_publishes_proposed_and_returns_cid():
     bus = A2ABus(client=fakeredis.FakeStrictRedis(decode_responses=True))
     core = HermesCore(bus=bus)
-    cid = core.start_request("find wireless earbuds under $120", customer_id="AM-CUST-0001")
+    cid = core.start_request("find wireless earbuds under $120", customer_id="CUST-1001")
     assert cid
     reqs = bus.read(bus.REQUESTS, last_id="0", block_ms=10)
     assert len(reqs) == 1

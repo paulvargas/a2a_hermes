@@ -22,3 +22,8 @@ def test_ground_response_preserves_known_sku():
     safe, violations = ground_response("Buy AM-EAR-1002", {"AM-EAR-1002"})
     assert "AM-EAR-1002" in safe
     assert violations == []
+
+def test_ground_response_preserves_customer_id():
+    safe, violations = ground_response("customer AM-CUST-0001", set())
+    assert "AM-CUST-0001" in safe
+    assert "AM-CUST-0001" not in violations

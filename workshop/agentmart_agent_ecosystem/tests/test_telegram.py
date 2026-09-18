@@ -26,7 +26,7 @@ class FakeCore:
         self.confirm_calls = []
         self.events = events or []
 
-    def start_request(self, text, customer_id="AM-CUST-0001", channel="web"):
+    def start_request(self, text, customer_id="CUST-1001", channel="web"):
         self.start_request_calls.append(
             {"text": text, "customer_id": customer_id, "channel": channel}
         )
@@ -50,7 +50,7 @@ def _fake_update(text):
     return update
 
 
-def _fake_context(core, customer_id="AM-CUST-0001"):
+def _fake_context(core, customer_id="CUST-1001"):
     context = MagicMock()
     context.bot_data = {"core": core, "customer_id": customer_id}
     return context
@@ -67,7 +67,7 @@ def test_handle_message_calls_start_request_with_message_text():
     asyncio.run(handle_message(update, context))
 
     assert core.start_request_calls == [
-        {"text": "find wireless earbuds under $120", "customer_id": "AM-CUST-0001", "channel": "telegram"}
+        {"text": "find wireless earbuds under $120", "customer_id": "CUST-1001", "channel": "telegram"}
     ]
 
 

@@ -26,7 +26,7 @@ class HermesCore:
         self.soul = _read_soul(soul_path)
         self._skus = known_skus()
 
-    def start_request(self, text, customer_id="AM-CUST-0001", channel="web"):
+    def start_request(self, text, customer_id="CUST-1001", channel="web"):
         clean, flags = validate_input(text)
         cid = str(uuid.uuid4())
         env = {"task_id": cid, "correlation_id": cid, "sender": "hermes",

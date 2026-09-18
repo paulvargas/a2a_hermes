@@ -53,7 +53,7 @@ def _normalize_reply(reply, payload):
 
 class ChatIn(BaseModel):
     text: str
-    customer_id: str = "AM-CUST-0001"
+    customer_id: str = "CUST-1001"
 
 
 class ConfirmIn(BaseModel):

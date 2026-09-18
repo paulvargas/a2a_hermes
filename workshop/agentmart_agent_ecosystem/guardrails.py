@@ -40,13 +40,27 @@ def validate_input(text, max_len=2000):
     return clean, flags
 
 
+def _is_customer_id_shaped(token):
+    """True if `token` has the AM-CUST-#### shape (customer id, not a SKU).
+
+    Customer ids share the AM-XXX-#### surface shape with SKUs (and with
+    order ids), so `_SKU_LIKE` matches them too. A customer id's middle
+    segment is literally "CUST" (e.g. "AM-CUST-0001"), which distinguishes
+    it from both real SKUs (a 3-letter category code) and order ids (handled
+    separately via ORDER_ID_PATTERN).
+    """
+    parts = token.split("-")
+    return len(parts) == 3 and parts[1].upper() == "CUST"
+
+
 def ground_response(text, allowed_skus):
     """Replace any SKU-looking token not in allowed_skus with a placeholder.
 
-    Order IDs (AM-ORD-...., per agentmart_ecosystem.ORDER_ID_PATTERN) are a
-    distinct identifier space from product SKUs — they are legitimately
-    absent from `allowed_skus` and must be preserved verbatim (e.g. in
-    order-status/checkout replies) rather than flagged as invented.
+    Order IDs (AM-ORD-...., per agentmart_ecosystem.ORDER_ID_PATTERN) and
+    customer ids (AM-CUST-...., see `_is_customer_id_shaped`) are distinct
+    identifier spaces from product SKUs — they are legitimately absent from
+    `allowed_skus` and must be preserved verbatim (e.g. in order-status/
+    checkout replies) rather than flagged as invented.
 
     Returns (safe_text, violations) where violations lists the invented SKUs found.
     """
@@ -55,6 +69,8 @@ def ground_response(text, allowed_skus):
     def repl(m):
         token = m.group(0)
         if ORDER_ID_PATTERN.fullmatch(token):
+            return token
+        if _is_customer_id_shaped(token):
             return token
         sku = token.upper()
         if sku in allowed_skus:

@@ -6,7 +6,7 @@ def test_handle_request_emits_lifecycle_and_result():
     bus = A2ABus(client=fakeredis.FakeStrictRedis(decode_responses=True))
     req = {"task_id": "t1", "correlation_id": "c1", "sender": "hermes",
            "recipient": "agentmart", "intent": "list-products", "state": "proposed",
-           "payload": {"text": "list earbuds under $120", "customer_id": "AM-CUST-0001"},
+           "payload": {"text": "list earbuds under $120", "customer_id": "CUST-1001"},
            "metrics": {}}
     final = handle_request(req, bus, dry_run=True)
     assert final["state"] in ("completed", "failed")
@@ -24,7 +24,7 @@ def test_handle_request_streams_hops_incrementally():
     bus = A2ABus(client=fakeredis.FakeStrictRedis(decode_responses=True))
     req = {"task_id": "t2", "correlation_id": "c2", "sender": "hermes",
            "recipient": "agentmart", "intent": "", "state": "proposed",
-           "payload": {"text": "list earbuds under $120", "customer_id": "AM-CUST-0001"},
+           "payload": {"text": "list earbuds under $120", "customer_id": "CUST-1001"},
            "metrics": {}}
     final = handle_request(req, bus, dry_run=True)
     assert final["state"] == "completed"
@@ -53,7 +53,7 @@ def test_handle_request_preserves_each_hops_own_state():
     bus = A2ABus(client=fakeredis.FakeStrictRedis(decode_responses=True))
     req = {"task_id": "t3", "correlation_id": "c3", "sender": "hermes",
            "recipient": "agentmart", "intent": "", "state": "proposed",
-           "payload": {"text": "list earbuds under $120", "customer_id": "AM-CUST-0001"},
+           "payload": {"text": "list earbuds under $120", "customer_id": "CUST-1001"},
            "metrics": {}}
     final = handle_request(req, bus, dry_run=True)
     assert final["state"] == "completed"

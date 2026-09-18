@@ -13,7 +13,7 @@ def _client():
 
 def test_chat_endpoint_returns_correlation_id():
     client = _client()
-    r = client.post("/chat", json={"text": "find earbuds under $120", "customer_id": "AM-CUST-0001"})
+    r = client.post("/chat", json={"text": "find earbuds under $120", "customer_id": "CUST-1001"})
     assert r.status_code == 200
     assert r.json().get("correlation_id")
 

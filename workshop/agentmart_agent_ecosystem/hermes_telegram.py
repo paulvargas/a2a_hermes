@@ -31,7 +31,7 @@ from telegram.ext import (
 
 logger = logging.getLogger("hermes.telegram")
 
-DEFAULT_CUSTOMER_ID = "AM-CUST-0001"
+DEFAULT_CUSTOMER_ID = "CUST-1001"
 _CB_PREFIX = "hitl"
 _TERMINAL_STATES = ("completed", "failed")
 _PENDING_KEY = "pending_confirmations"
