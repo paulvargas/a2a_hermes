@@ -212,6 +212,13 @@
   }
   .tmetrics span b { color: var(--text); font-weight: 600; }
   .tmetrics .none { color: var(--text-faint); }
+  .tmeta {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    margin-top: 8px; font-size: 10.5px; color: var(--text-faint);
+  }
+  .tmeta .step { color: var(--text-dim); font-weight: 700; }
+  .tmeta .sep { opacity: .45; }
+  .tmeta .offset { color: var(--accent); }
 
   /* scrollbars */
   ::-webkit-scrollbar { width: 9px; }
@@ -314,6 +321,7 @@
   };
 
   var totalTokens = 0, totalElapsed = 0, envCount = 0;
+  var stepNo = 0, firstTs = null;
   var es = null;
   var busy = false;
   var replyRendered = false;
@@ -375,6 +383,22 @@
     return Number(n).toLocaleString();
   }
 
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+  // Absolute wall-clock (HH:MM:SS) for a hop's created_at timestamp.
+  function fmtClock(d) {
+    if (!d || isNaN(d.getTime())) return "--:--:--";
+    return pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+  }
+
+  // Seconds elapsed since the first envelope of this run, e.g. "+0.0s", "+2.3s".
+  function fmtOffset(d) {
+    if (!d || isNaN(d.getTime()) || firstTs == null) return "+0.0s";
+    var secs = (d.getTime() - firstTs) / 1000;
+    if (secs < 0) secs = 0;
+    return "+" + secs.toFixed(1) + "s";
+  }
+
   function addTraceNode(env) {
     traceEmpty.style.display = "none";
     timeline.style.display = "block";
@@ -385,6 +409,19 @@
     var m = env.metrics || {};
     var sender = env.sender || "?";
     var recipient = env.recipient || "?";
+
+    // Step number and timing relative to the first envelope in this run.
+    stepNo += 1;
+    var ts = env.created_at ? new Date(env.created_at) : null;
+    if (ts && !isNaN(ts.getTime()) && firstTs == null) firstTs = ts.getTime();
+    var metaHtml =
+      '<div class="tmeta">' +
+        '<span class="step">#' + stepNo + '</span>' +
+        '<span class="sep">·</span>' +
+        '<span class="clock">' + esc(fmtClock(ts)) + '</span>' +
+        '<span class="sep">·</span>' +
+        '<span class="offset">' + esc(fmtOffset(ts)) + '</span>' +
+      '</div>';
 
     var metricsHtml;
     var hasMetrics = m && (m.total_tokens != null || m.elapsed_ms != null ||
@@ -411,6 +448,7 @@
         '</div>' +
         (env.intent ? '<span class="intent">' + esc(env.intent) + '</span>' : '') +
         metricsHtml +
+        metaHtml +
       '</div>';
     timeline.appendChild(node);
     scrollTrace();
@@ -516,9 +554,21 @@
     setTraceStatus("Complete", "live");
   }
 
+  function resetTrace() {
+    timeline.innerHTML = "";
+    timeline.style.display = "none";
+    traceEmpty.style.display = "";
+    totalTokens = 0; totalElapsed = 0; envCount = 0;
+    stepNo = 0; firstTs = null;
+    elTokens.textContent = num(totalTokens);
+    elElapsed.innerHTML = num(totalElapsed) + '<small> ms</small>';
+    elEnvelopes.textContent = num(envCount);
+  }
+
   function openStream(cid) {
     currentCid = cid;
     replyRendered = false;
+    resetTrace();
     es = new EventSource("/events/" + encodeURIComponent(cid));
 
     es.onmessage = function (e) {

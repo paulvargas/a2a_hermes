@@ -6,7 +6,7 @@ import operator
 import os
 import re
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Callable, Literal, TypedDict
@@ -98,6 +98,10 @@ class A2AEnvelope:
     state: str = "proposed"
     protocol: str = "agentmart.a2a.v1"
     created_at: str = ""
+    # Real per-agent token usage + latency for a hop backed by an LLM call
+    # (prompt_tokens/completion_tokens/total_tokens/elapsed_ms). Additive and
+    # empty for routing/accepted hops that never touch the model.
+    metrics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -358,9 +362,13 @@ def emit_envelope(
     intent: str,
     payload: dict[str, Any],
     lifecycle: str = "in_progress",
+    metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one A2A hop. Pure: parallel branches share a state snapshot, so the
-    caller collects the returned envelopes and hands them back as an ``a2a_log`` delta."""
+    caller collects the returned envelopes and hands them back as an ``a2a_log`` delta.
+
+    ``metrics`` carries the real token usage + elapsed time for a hop backed by an
+    LLM call; routing/accepted hops leave it empty."""
     task = state.get("a2a_task") or {}
     envelope = A2AEnvelope(
         task_id=str(uuid4()),
@@ -371,6 +379,7 @@ def emit_envelope(
         correlation_id=task.get("correlation_id") or task.get("task_id") or str(uuid4()),
         state=lifecycle,
         protocol=task.get("protocol", "agentmart.a2a.v1"),
+        metrics=metrics or {},
     ).to_dict()
     return envelope
 
@@ -417,7 +426,9 @@ def make_agent_node(
             dry_run=state.get("dry_run", False),
             model_config=model_config_from_state(state),
         )
-        result = client.complete(agent, system_prompt, prompt_builder(state))
+        result, metrics = client.complete_with_metrics(
+            agent, system_prompt, prompt_builder(state)
+        )
         done = emit_envelope(
             state,
             sender=agent,
@@ -425,6 +436,7 @@ def make_agent_node(
             intent=capability or output_key,
             payload={"result_chars": len(result)},
             lifecycle="completed",
+            metrics=metrics,
         )
         return {
             "transcript": [transcript_entry(agent, result, envelope)],
@@ -711,7 +723,9 @@ def order_agent_node(state: AgentMartState) -> AgentMartState:
         dry_run=state.get("dry_run", False),
         model_config=model_config_from_state(state),
     )
-    result = client.complete("order_agent", ORDER_AGENT_SYSTEM_PROMPT, _order_agent_prompt(next_state))
+    result, metrics = client.complete_with_metrics(
+        "order_agent", ORDER_AGENT_SYSTEM_PROMPT, _order_agent_prompt(next_state)
+    )
 
     done = emit_envelope(
         next_state,
@@ -723,6 +737,7 @@ def order_agent_node(state: AgentMartState) -> AgentMartState:
             "draft_created": bool(next_state.get("draft_order", {}).get("order_id")),
         },
         lifecycle="completed",
+        metrics=metrics,
     )
 
     # Only the keys this node actually decided; transcript/a2a_log go back as deltas.
@@ -783,7 +798,7 @@ def payment_agent_node(state: AgentMartState) -> AgentMartState:
         dry_run=state.get("dry_run", False),
         model_config=model_config_from_state(state),
     )
-    result = client.complete(
+    result, metrics = client.complete_with_metrics(
         "payment_agent",
         PAYMENT_AGENT_SYSTEM_PROMPT,
         json.dumps({"a2a_task": state["a2a_task"], "receipt": receipt}, indent=2),
@@ -796,6 +811,7 @@ def payment_agent_node(state: AgentMartState) -> AgentMartState:
         intent="checkout_payment",
         payload={k: v for k, v in receipt.items() if k != "error"} or {"error": receipt.get("error")},
         lifecycle="failed" if "error" in receipt else "completed",
+        metrics=metrics,
     )
 
     return {
