@@ -4,3 +4,10 @@
 # Python
 __pycache__/
 *.pyc
+.venv/
+
+# Secrets — never commit
+.env
+keyvault.env
+*.key
+a2a_audit.jsonl
