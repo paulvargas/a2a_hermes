@@ -85,6 +85,30 @@ def test_handle_message_sends_grounded_final_reply():
     assert any("Your order is on its way" in t for t in sent)
 
 
+def test_handle_message_ignores_agent_hop_completed_uses_terminal_reply():
+    """Regression guard mirroring test_web's: an agent-hop envelope (e.g.
+    order_agent -> hermes_myshopper) carries state="completed" for its own
+    sub-task with no transcript in its payload. Only the TERMINAL framing
+    envelope (sender="agentmart") should be sent as the final chat reply."""
+    core = FakeCore(events=[
+        {"state": "completed", "correlation_id": "cid-1", "task_id": "t1",
+         "sender": "order_agent", "recipient": "hermes_myshopper",
+         "payload": {"order_id": None, "draft_created": False}},
+        {"state": "completed", "correlation_id": "cid-1", "task_id": "t1",
+         "sender": "agentmart", "recipient": "hermes",
+         "payload": {"reply": None,
+                     "transcript": [{"agent": "order_agent", "message": "Your order ships tomorrow."}]}},
+    ])
+    update = _fake_update("where is my order")
+    context = _fake_context(core)
+
+    asyncio.run(handle_message(update, context))
+
+    sent = [c.args[0] for c in update.message.reply_text.await_args_list if c.args]
+    assert any("Your order ships tomorrow." in t for t in sent)
+    assert not any("AgentMart has completed your request." in t for t in sent)
+
+
 def test_handle_message_normalizes_list_reply():
     """Same normalization guard as hermes_web: a 1-element transcript list
     must still surface as readable text."""

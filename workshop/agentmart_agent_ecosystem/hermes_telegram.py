@@ -169,13 +169,20 @@ async def _handle_envelope(message, core, env: dict, seen_senders: set, bot_data
         await message.reply_text(str(summary), reply_markup=keyboard)
         return
 
-    if state == "completed":
+    # Only the TERMINAL framing envelope (sender "agentmart") carries the real
+    # customer-facing reply. Per-agent hops (e.g. order_agent -> hermes_myshopper)
+    # reuse the same completed/failed lifecycle states for their own sub-task but
+    # never carry a transcript -- sending those as the final reply is what
+    # produced the "AgentMart has completed your request." placeholder.
+    is_terminal_frame = env.get("sender") == "agentmart" and state in _TERMINAL_STATES
+
+    if is_terminal_frame and state == "completed":
         reply_str = _normalize_reply(payload.get("reply"), payload)
         safe, _violations = core.finalize_reply(reply_str)
         await _send_text(message, safe)
         return
 
-    if state == "failed":
+    if is_terminal_frame and state == "failed":
         err = payload.get("error") or payload.get("reply") or (
             "Sorry, something went wrong while handling that request."
         )
@@ -206,7 +213,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         saw_terminal = False
         seen_senders = set()
         for env in core.stream_events(cid):
-            if env.get("state") in _TERMINAL_STATES:
+            # Only the terminal agentmart envelope counts as "we heard back" --
+            # an agent hop's own completed/failed lifecycle state is not the
+            # real answer (see the sender gate in _handle_envelope above).
+            if env.get("sender") == "agentmart" and env.get("state") in _TERMINAL_STATES:
                 saw_terminal = True
             asyncio.run_coroutine_threadsafe(
                 _handle_envelope(message, core, env, seen_senders, bot_data), loop
@@ -271,6 +281,14 @@ def main() -> None:
 
     load_dotenv()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    # httpx (used by python-telegram-bot for the Bot API HTTP calls) and the
+    # telegram/telegram.ext loggers log each request at INFO with the full
+    # request URL, which embeds the bot token (https://api.telegram.org/bot
+    # <TOKEN>/...). Keep those at WARNING so the token never hits the log
+    # stream; hermes.* stays at INFO for our own operational logging.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("telegram").setLevel(logging.WARNING)
+    logging.getLogger("telegram.ext").setLevel(logging.WARNING)
 
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:

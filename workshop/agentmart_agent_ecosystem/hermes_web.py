@@ -79,11 +79,23 @@ def create_app(core) -> FastAPI:
     def events(cid: str):
         def gen():
             for env in core.stream_events(cid):
-                if env.get("state") == "completed":
+                state = env.get("state")
+                # Only the TERMINAL framing envelope (agentmart -> hermes) carries the
+                # real customer-facing reply/transcript. Per-agent hops (e.g.
+                # order_agent -> hermes_myshopper) reuse the same lifecycle states
+                # (accepted/completed/failed) for their own sub-task, but their
+                # payload has no transcript -- rendering them as the chat reply is
+                # what produced the "AgentMart has completed your request." placeholder.
+                # Those hops still stream through unmodified for the live trace.
+                if env.get("sender") == "agentmart" and state in ("completed", "failed"):
                     payload = env.get("payload") or {}
-                    reply_str = _normalize_reply(payload.get("reply"), payload)
-                    safe, _violations = core.finalize_reply(reply_str)
-                    env.setdefault("payload", {})["reply"] = safe
+                    if state == "completed":
+                        reply_str = _normalize_reply(payload.get("reply"), payload)
+                        safe, _violations = core.finalize_reply(reply_str)
+                        env.setdefault("payload", {})["reply"] = safe
+                    else:  # failed
+                        err = payload.get("error") or "Sorry, something went wrong while handling that request."
+                        env.setdefault("payload", {})["reply"] = str(err)
                 yield f"data: {json.dumps(env)}\n\n"
             yield "event: done\ndata: {}\n\n"
 

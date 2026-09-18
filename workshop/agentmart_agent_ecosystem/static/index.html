@@ -795,6 +795,17 @@
       setChatStatus("Awaiting your approval", "busy");
       return;
     }
+
+    // Only the TERMINAL framing envelope (sender "agentmart") carries the real
+    // customer-facing reply. Per-agent hops reuse the same completed/failed
+    // lifecycle states for their own sub-task (e.g. order_agent -> hermes_myshopper)
+    // but never carry a transcript -- rendering those as a chat bubble is what
+    // produced the "AgentMart has completed your request." placeholder. Those
+    // hops are still shown in the trace (via addTraceNode above) but never here.
+    if (env.sender !== "agentmart" || (state !== "completed" && state !== "failed")) {
+      return;
+    }
+
     if (state === "completed") {
       if (!replyRendered) {
         clearTyping();
