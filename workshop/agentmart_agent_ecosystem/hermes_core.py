@@ -55,7 +55,15 @@ class HermesCore:
                 if env.get("correlation_id") != correlation_id:
                     continue
                 yield env
-                if env.get("state") in ("completed", "failed"):
+                # Only the TERMINAL framing envelope (agentmart -> hermes) ends the
+                # stream. Per-agent hops (e.g. order_agent -> hermes_myshopper) reuse
+                # the same completed/failed lifecycle states for their own sub-task,
+                # so terminating on ANY completed/failed envelope regardless of sender
+                # would stop the stream at the first agent hop and drop the real
+                # terminal envelope (and its transcript) that follows it. An
+                # input_required envelope (any sender) must not terminate the stream
+                # either -- it falls through here unaffected.
+                if env.get("sender") == "agentmart" and env.get("state") in ("completed", "failed"):
                     return
 
     def confirm(self, correlation_id, task_id, approved):
