@@ -7,9 +7,27 @@ from agentmart_ecosystem import (
     load_hermes_a2a_config,
     load_product_listing,
 )
+from liveness import Liveness
 from orders import find_payable_order
 
 log = logging.getLogger("agentmart.worker")
+
+# Shared across handle_request calls in this process so a single worker's
+# liveness view accumulates over its lifetime rather than resetting per request.
+liveness = Liveness()
+
+def _publish_heartbeat(bus, agent):
+    """Publish a lightweight heartbeat envelope for `agent` and mark it locally.
+
+    Additive only: never touches hop/lifecycle publishing, correlation, metrics,
+    or the HITL gate. One xadd per hop, so it stays cheap.
+    """
+    liveness.mark(agent)
+    bus.publish(bus.HEARTBEATS, {
+        "agent": agent,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "status": "healthy",
+    })
 
 def _env(state, sender, recipient, intent, payload, correlation_id, task_id, metrics=None):
     return {"task_id": task_id, "correlation_id": correlation_id, "sender": sender,
@@ -130,6 +148,7 @@ def handle_request(env, bus, dry_run=True):
                 bus.publish(bus.RESPONSES, _env(hop.get("state", "in_progress"), hop.get("sender", "agentmart"),
                             hop.get("recipient", "hermes"), intent, hop, cid, task_id,
                             metrics=hop.get("metrics")))
+                _publish_heartbeat(bus, hop.get("sender", "agentmart"))
             seen = len(hops)
         final = _env("completed", "agentmart", "hermes", intent,
                      {"transcript": last_state.get("transcript", []),

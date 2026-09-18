@@ -13,6 +13,8 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 
+from liveness import Liveness
+
 
 def _text_from_item(item):
     """Pull a human-readable string out of a transcript/reply item."""
@@ -66,9 +68,30 @@ def create_app(core) -> FastAPI:
     app = FastAPI(title="Hermes / MyShopper")
     here = os.path.dirname(os.path.abspath(__file__))
 
+    # Liveness state for the /agents endpoint. Reading the whole heartbeat
+    # stream on every poll would get more expensive as it grows, so this
+    # instance persists across requests and only reads entries newer than
+    # the last one it has already seen.
+    agent_liveness = Liveness()
+    liveness_cursor = {"last_id": "0"}
+
     @app.get("/")
     def index():
         return FileResponse(os.path.join(here, "static", "index.html"))
+
+    @app.get("/agents")
+    def agents(ttl_ms: int = 6000):
+        # block_ms=None -> non-blocking XREAD (returns immediately with whatever
+        # is already on the stream); passing 0 would block the request forever
+        # waiting for a new heartbeat instead of just polling the current state.
+        for entry_id, env in core.bus.read(
+            core.bus.HEARTBEATS, last_id=liveness_cursor["last_id"], block_ms=None, count=1000
+        ):
+            liveness_cursor["last_id"] = entry_id
+            agent = env.get("agent")
+            if agent:
+                agent_liveness.mark(agent)
+        return agent_liveness.snapshot(ttl_ms=ttl_ms)
 
     @app.post("/chat")
     def chat(body: ChatIn):

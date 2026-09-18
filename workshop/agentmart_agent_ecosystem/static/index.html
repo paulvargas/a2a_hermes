@@ -45,6 +45,7 @@
   .app {
     display: grid;
     grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    grid-template-rows: auto 1fr;
     height: 100vh;
     max-width: 1500px;
     margin: 0 auto;
@@ -84,6 +85,30 @@
   .status-dot.live i { background: var(--st-completed); box-shadow: 0 0 0 3px rgba(52,211,153,0.18); }
   .status-dot.busy i { background: var(--st-in_progress); box-shadow: 0 0 0 3px rgba(240,181,42,0.18); animation: pulse 1.1s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  /* ---------- Agent liveness row ---------- */
+  .liveness-row {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 8px 22px; border-bottom: 1px solid var(--line);
+    background: var(--bg-elev);
+  }
+  .liveness-label {
+    font-size: 10px; letter-spacing: .6px; text-transform: uppercase;
+    color: var(--text-faint); margin-right: 2px;
+  }
+  .liveness-item {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11.5px; color: var(--text-dim);
+  }
+  .liveness-item .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--text-faint); flex: none;
+    transition: background .3s, box-shadow .3s;
+  }
+  .liveness-item.healthy .dot { background: var(--st-completed); box-shadow: 0 0 0 2px rgba(52,211,153,0.18); }
+  .liveness-item.dead .dot { background: var(--st-failed); box-shadow: 0 0 0 2px rgba(255,93,108,0.18); }
+  .liveness-item.unknown .dot { background: var(--text-faint); }
 
   /* ---------- Chat ---------- */
   .chat-scroll {
@@ -311,7 +336,7 @@
 
   /* responsive */
   @media (max-width: 860px) {
-    .app { grid-template-columns: 1fr; grid-template-rows: 1fr auto; height: 100vh; }
+    .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; height: 100vh; }
     .panel--trace { max-height: 42vh; border-top: 1px solid var(--line); }
     .panel--chat { border-right: none; }
     .msg { max-width: 92%; }
@@ -320,6 +345,11 @@
 </head>
 <body>
 <div class="app">
+  <!-- Agent liveness: unobtrusive status row above both panels, polled from /agents. -->
+  <div class="liveness-row" id="liveness-row">
+    <span class="liveness-label">Agents</span>
+  </div>
+
   <!-- LEFT: Chat -->
   <section class="panel panel--chat">
     <div class="panel-head">
@@ -404,6 +434,18 @@
     proposed: "proposed", accepted: "accepted", in_progress: "in progress",
     completed: "completed", failed: "failed", input_required: "input required"
   };
+
+  // The 5 AgentMart agents + payment, in a fixed display order regardless of
+  // what order /agents reports them (or whether some haven't spoken yet).
+  var LIVENESS_ORDER = [
+    "shopping_agent", "pricing_agent", "inventory_agent",
+    "fulfillment_agent", "order_agent", "payment_agent"
+  ];
+  var LIVENESS_LABEL = {
+    shopping_agent: "Shopping", pricing_agent: "Pricing", inventory_agent: "Inventory",
+    fulfillment_agent: "Fulfillment", order_agent: "Order", payment_agent: "Payment"
+  };
+  var livenessRow = document.getElementById("liveness-row");
 
   var totalTokens = 0, totalElapsed = 0, envCount = 0;
   var stepNo = 0, firstTs = null;
@@ -940,6 +982,31 @@
     }
   });
   sendBtn.addEventListener("click", send);
+
+  // ---------- Agent liveness polling ----------
+  // Renders one dot per known agent, refreshed from GET /agents. Purely
+  // additive/decorative: a failed fetch just leaves the row as-is (or
+  // "unknown" on first load) rather than disrupting chat or trace.
+  function renderLiveness(snapshot) {
+    var items = LIVENESS_ORDER.map(function (agent) {
+      var status = (snapshot && snapshot[agent]) || "unknown";
+      return '<span class="liveness-item ' + status + '">' +
+        '<span class="dot"></span>' + esc(LIVENESS_LABEL[agent] || agent) +
+        '</span>';
+    });
+    livenessRow.innerHTML = '<span class="liveness-label">Agents</span>' + items.join("");
+  }
+
+  function pollLiveness() {
+    fetch("/agents")
+      .then(function (r) { return r.json(); })
+      .then(renderLiveness)
+      .catch(function () {}); // stay quiet; row simply keeps its last known state
+  }
+
+  renderLiveness(null);
+  pollLiveness();
+  setInterval(pollLiveness, 4000);
 
   // greeting
   addMessage("hermes", "Hi, I'm Hermes — your MyShopper concierge. Tell me what you're looking for and I'll coordinate with AgentMart to find it. Try: “find wireless earbuds under $120”.");
