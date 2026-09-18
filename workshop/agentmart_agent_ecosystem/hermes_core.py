@@ -37,13 +37,19 @@ class HermesCore:
         self.bus.publish(self.bus.REQUESTS, env)
         return cid
 
-    def stream_events(self, correlation_id, timeout_ms=15000):
+    def stream_events(self, correlation_id, timeout_ms=120000):
+        # timeout_ms bounds INACTIVITY, not total run time: the worker now streams
+        # hops as each agent finishes, and a real gpt-4o-mini run takes ~18s end to
+        # end, so a total-time budget would still close mid-run. Reset the idle
+        # counter on every read (matching this cid or not) so a long-but-active run
+        # never times out; only a genuinely silent window closes the stream.
         last_id, waited = "0", 0
         while waited < timeout_ms:
             items = self.bus.read(self.bus.RESPONSES, last_id=last_id, block_ms=1000)
             if not items:
                 waited += 1000
                 continue
+            waited = 0
             for entry_id, env in items:
                 last_id = entry_id
                 if env.get("correlation_id") != correlation_id:
