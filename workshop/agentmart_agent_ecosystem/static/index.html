@@ -904,7 +904,7 @@
     fetch("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text, customer_id: "AM-CUST-0001" })
+      body: JSON.stringify({ text: text, customer_id: "CUST-1001" })
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {

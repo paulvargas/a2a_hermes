@@ -21,7 +21,7 @@ def handle_request(env, bus, dry_run=True):
     intent = env.get("intent", "")
     payload = env.get("payload", {})
     text = payload.get("text", "")
-    customer_id = payload.get("customer_id", "AM-CUST-0001")
+    customer_id = payload.get("customer_id", "CUST-1001")
     bus.publish(bus.RESPONSES, _env("accepted", "agentmart", "hermes", intent, {"ack": True}, cid, env["task_id"]))
     log.info("accepted cid=%s intent=%s", cid, intent)
     try:
