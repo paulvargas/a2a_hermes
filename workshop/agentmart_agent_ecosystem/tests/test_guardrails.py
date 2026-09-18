@@ -12,3 +12,13 @@ def test_ground_response_strips_invented_skus():
     assert "AM-EAR-0001" in safe
     assert "AM-FAKE-9999" not in safe
     assert "AM-FAKE-9999" in violations
+
+def test_ground_response_preserves_order_ids():
+    safe, violations = ground_response("Your order AM-ORD-4521 is confirmed", set())
+    assert "AM-ORD-4521" in safe
+    assert "AM-ORD-4521" not in violations
+
+def test_ground_response_preserves_known_sku():
+    safe, violations = ground_response("Buy AM-EAR-1002", {"AM-EAR-1002"})
+    assert "AM-EAR-1002" in safe
+    assert violations == []

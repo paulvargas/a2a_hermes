@@ -6,7 +6,7 @@ modify them.
 """
 
 import re
-from agentmart_ecosystem import SKU_PATTERN
+from agentmart_ecosystem import ORDER_ID_PATTERN
 try:
     from catalog import query_products
 except Exception:
@@ -15,14 +15,15 @@ except Exception:
 _INJECTION = re.compile(r"(ignore (all|your|previous) instructions|reveal (the )?system prompt|"
                         r"disregard .* rules|you are now|act as)", re.IGNORECASE)
 
-# SKU_PATTERN (imported above) matches only the canonical AM-XXX-0000 shape
-# (exactly 3 letters, 4 digits), so it won't even recognize a malformed
-# hallucinated SKU like "AM-FAKE-9999" (4 letters) as SKU-shaped, and such
-# tokens would slip through ground_response() unredacted. Grounding needs to
-# catch anything that *looks* like a SKU so it can be checked against the
-# real catalog, so scan with a more permissive shape here and rely on exact
-# membership in `allowed_skus` (sourced from SKU_PATTERN-conformant catalog
-# data via known_skus()) to decide what is genuine.
+# agentmart_ecosystem.SKU_PATTERN matches only the canonical AM-XXX-0000
+# shape (exactly 3 letters, 4 digits), so it won't even recognize a
+# malformed hallucinated SKU like "AM-FAKE-9999" (4 letters) as SKU-shaped,
+# and such tokens would slip through ground_response() unredacted. Grounding
+# needs to catch anything that *looks* like a SKU so it can be checked
+# against the real catalog, so scan with a more permissive shape here and
+# rely on exact membership in `allowed_skus` (sourced from
+# SKU_PATTERN-conformant catalog data via known_skus()) to decide what is
+# genuine.
 _SKU_LIKE = re.compile(r"\bAM-[A-Z0-9]+-[A-Z0-9]+\b", re.IGNORECASE)
 
 
@@ -42,14 +43,22 @@ def validate_input(text, max_len=2000):
 def ground_response(text, allowed_skus):
     """Replace any SKU-looking token not in allowed_skus with a placeholder.
 
+    Order IDs (AM-ORD-...., per agentmart_ecosystem.ORDER_ID_PATTERN) are a
+    distinct identifier space from product SKUs — they are legitimately
+    absent from `allowed_skus` and must be preserved verbatim (e.g. in
+    order-status/checkout replies) rather than flagged as invented.
+
     Returns (safe_text, violations) where violations lists the invented SKUs found.
     """
     violations = []
 
     def repl(m):
-        sku = m.group(0).upper()
+        token = m.group(0)
+        if ORDER_ID_PATTERN.fullmatch(token):
+            return token
+        sku = token.upper()
         if sku in allowed_skus:
-            return m.group(0)
+            return token
         violations.append(sku)
         return "[unverified SKU]"
 
