@@ -1,5 +1,6 @@
 import json, os
 from datetime import datetime, timezone
+from redis import exceptions as redis_exceptions
 
 _JSON_FIELDS = ("payload", "metrics")
 _REDACT_KEYS = ("api_key", "authorization", "token", "openai_api_key", "telegram_bot_token")
@@ -41,7 +42,14 @@ class A2ABus:
         return entry_id
 
     def read(self, stream: str, last_id: str = "0", block_ms: int = 1000, count: int = 10):
-        resp = self.client.xread({stream: last_id}, count=count, block=block_ms)
+        try:
+            resp = self.client.xread({stream: last_id}, count=count, block=block_ms)
+        except redis_exceptions.TimeoutError:
+            # A blocking XREAD that elapses with no new entries raises
+            # TimeoutError in redis-py; treat an idle window as "no messages"
+            # so the caller's loop simply continues. Other errors (e.g.
+            # ConnectionError) propagate.
+            return []
         items = []
         for _stream, entries in (resp or []):
             for entry_id, fields in entries:

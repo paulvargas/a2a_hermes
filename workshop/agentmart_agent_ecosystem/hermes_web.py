@@ -14,6 +14,43 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 
 
+def _text_from_item(item):
+    """Pull a human-readable string out of a transcript/reply item."""
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        for k in ("reply", "text", "content", "message"):
+            v = item.get(k)
+            if isinstance(v, str) and v.strip():
+                return v
+    return None
+
+
+def _normalize_reply(reply, payload):
+    """Coerce a completed reply into a single human-readable string.
+
+    The worker sets payload["reply"] to `customer_reply or transcript[-1:]`,
+    so it may be a plain string, a 1-element list, a dict, or empty. Fall back
+    to the last transcript entry, then to a generic completion message.
+    """
+    if isinstance(reply, str) and reply.strip():
+        return reply
+    if isinstance(reply, list) and reply:
+        s = _text_from_item(reply[-1])
+        if s:
+            return s
+    if isinstance(reply, dict):
+        s = _text_from_item(reply)
+        if s:
+            return s
+    transcript = (payload or {}).get("transcript") or []
+    if transcript:
+        s = _text_from_item(transcript[-1])
+        if s:
+            return s
+    return "AgentMart has completed your request."
+
+
 class ChatIn(BaseModel):
     text: str
     customer_id: str = "AM-CUST-0001"
@@ -44,10 +81,9 @@ def create_app(core) -> FastAPI:
             for env in core.stream_events(cid):
                 if env.get("state") == "completed":
                     payload = env.get("payload") or {}
-                    reply = payload.get("reply")
-                    if isinstance(reply, str):
-                        safe, _violations = core.finalize_reply(reply)
-                        env.setdefault("payload", {})["reply"] = safe
+                    reply_str = _normalize_reply(payload.get("reply"), payload)
+                    safe, _violations = core.finalize_reply(reply_str)
+                    env.setdefault("payload", {})["reply"] = safe
                 yield f"data: {json.dumps(env)}\n\n"
             yield "event: done\ndata: {}\n\n"
 
@@ -62,6 +98,8 @@ def create_app(core) -> FastAPI:
 
 
 def main():
+    from dotenv import load_dotenv
+    load_dotenv()
     import redis, uvicorn
     from a2a_bus import A2ABus
     from hermes_core import HermesCore

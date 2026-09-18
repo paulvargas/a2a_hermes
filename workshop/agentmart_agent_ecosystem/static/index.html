@@ -487,10 +487,13 @@
       return;
     }
     if (state === "completed") {
-      var reply = (env.payload || {}).reply;
-      if (typeof reply === "string" && reply.length && !replyRendered) {
+      if (!replyRendered) {
         clearTyping();
-        addMessage("hermes", reply);
+        var reply = (env.payload || {}).reply;
+        var text = (typeof reply === "string" && reply.trim())
+          ? reply
+          : "Done — AgentMart has completed your request.";
+        addMessage("hermes", text);
         replyRendered = true;
       }
       return;
@@ -571,7 +574,13 @@
 
   input.addEventListener("input", autosize);
   input.addEventListener("keydown", function (e) {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+    // Enter submits; Shift+Enter inserts a newline. Ignore Enter while an
+    // IME composition is active (e.key can be "Process"/keyCode 229 then).
+    var isEnter = e.key === "Enter" || e.keyCode === 13;
+    if (isEnter && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+      e.preventDefault();
+      send();
+    }
   });
   sendBtn.addEventListener("click", send);
 

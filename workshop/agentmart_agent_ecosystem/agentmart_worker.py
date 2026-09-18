@@ -52,6 +52,8 @@ def run_worker(bus, dry_run=False):
 
 if __name__ == "__main__":
     import redis, os
+    from dotenv import load_dotenv
+    load_dotenv()
     client = redis.Redis(host=os.getenv("REDIS_HOST", "localhost"),
                          port=int(os.getenv("REDIS_PORT", "6379")), decode_responses=True)
     run_worker(A2ABus(client=client), dry_run=not bool(os.getenv("OPENAI_API_KEY")))
