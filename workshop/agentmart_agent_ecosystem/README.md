@@ -1,469 +1,230 @@
-# AgentMart Agent Ecosystem
+# MyShopper (Hermes) — an A2A buying agent for AgentMart
 
-This workshop lab implements the Day 3 architecture from the root `README.md`:
-
-```text
-Customer -> Chat -> Hermes / MyShopper -> A2A -> AgentMart agent group
-```
-
-The sample uses LangGraph to model the agent workflow and the OpenAI Python SDK pointed at OpenRouter for model calls.
+MyShopper is the customer-facing brand for **Hermes**, a personal buying agent that
+never touches a product catalog directly. Instead, every shopping, pricing,
+stock, delivery, order, or checkout question is handed off over **Agent-to-Agent
+(A2A) messaging on Redis Streams** to **AgentMart**, a back-office ecosystem of
+LangGraph agents that hold the real catalog and order book. A customer talks to
+Hermes over a web chat (with a live, drill-down trace of every A2A hop) or over
+Telegram; behind the scenes Hermes coordinates five LangGraph agents —
+Shopping, Pricing, Inventory, Fulfillment, and Order — plus a sixth, Payment,
+that only runs behind a human-in-the-loop (HITL) approval gate at checkout.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    Customer[Customer]
-    Channel[Telegram / WhatsApp / WebChat]
-    Hermes[Hermes AI Agent<br/>MyShopper]
-    Router{Intent router}
+    Customer((Customer))
 
-    subgraph AgentMart[AgentMart Agent Ecosystem]
-        Shopping[Shopping Agent]
-        Pricing[Pricing Agent]
-        Inventory[Inventory Agent]
-        Fulfillment[Fulfillment Agent]
-        Order[Order Agent]
-        Payment[Payment Agent<br/>simulated]
+    subgraph Frontends["Front-ends"]
+        Web["Web chat UI<br/>+ live A2A trace"]
+        TG["Telegram bot"]
     end
 
-    Customer --> Channel
-    Channel --> Hermes
-    Hermes -->|A2A envelope| Router
-    Router -->|browse / advice| Shopping
-    Router -->|purchase| Inventory
-    Router -->|order status| Order
-    Router -->|checkout| Order
-    Shopping --> Pricing
-    Pricing --> Inventory
-    Inventory --> Fulfillment
-    Fulfillment --> Order
-    Order -->|checkout only| Payment
+    Core["Hermes core<br/>SOUL persona · HITL gate · guardrails"]
+
+    subgraph Bus["Redis Streams — A2A bus"]
+        ReqStream[("a2a:requests")]
+        RespStream[("a2a:responses")]
+        HBStream[("a2a:heartbeats")]
+    end
+
+    Worker["AgentMart worker"]
+
+    subgraph Graph["LangGraph: AgentMart agents"]
+        direction LR
+        Shopping["Shopping"] --> Pricing["Pricing"] --> Inventory["Inventory"] --> Fulfillment["Fulfillment"] --> Order["Order"]
+        Order -. "checkout only, after HITL approval" .-> Payment["Payment<br/>(simulated)"]
+    end
+
+    LLM["OpenAI gpt-4o-mini"]
+    DB[("SQLite<br/>catalog + orders")]
+
+    Customer --> Web
+    Customer --> TG
+    Web --> Core
+    TG --> Core
+    Core -- "publish (state: proposed)" --> ReqStream
+    ReqStream --> Worker
+    Worker --> Graph
+    Graph --> LLM
+    Graph --> DB
+    Worker -- "publish (accepted / in_progress / completed)" --> RespStream
+    Worker -- "publish every hop" --> HBStream
+    RespStream -- "SSE GET /events/{cid}" --> Web
+    RespStream --> TG
+    HBStream -- "polled by GET /agents" --> Web
 ```
 
-Hermes classifies the customer message, then only the agents that intent needs
-are woken. A status question does not wake the whole ecosystem.
+**Request lifecycle.** A message from Web or Telegram enters `HermesCore.start_request`,
+which validates/sanitizes the text (`guardrails.validate_input`), assigns a
+`correlation_id`, and publishes a `proposed` envelope onto `a2a:requests`. The
+`agentmart_worker.py` consumer picks it up, immediately echoes an `accepted`
+envelope onto `a2a:responses`, then classifies the intent and streams the
+LangGraph run: as each agent (Shopping → Pricing → Inventory → Fulfillment →
+Order, fanning out/joining as the intent requires) finishes its superstep, the
+worker publishes that hop as its own `in_progress`/`completed` envelope — with
+token usage and elapsed time attached — plus a heartbeat on `a2a:heartbeats`.
+When the graph finishes, the worker publishes one terminal `completed` (or
+`failed`) envelope, `sender: agentmart`, carrying the grounded customer reply.
+Every envelope carries the same `correlation_id` so the whole exchange can be
+reconstructed by replaying the stream (or `a2a_audit.jsonl`) in order. The web
+UI's live trace is simply `GET /events/{cid}`, a Server-Sent-Events endpoint
+that tails `a2a:responses` and forwards every envelope — hops included — to the
+browser as it happens; Telegram drains the same generator on a worker thread.
+A `checkout_payment` request pauses mid-flow: the worker publishes an
+`input_required` envelope and blocks (via `await_confirmation`, polling
+`a2a:requests`) until the customer's Approve/Decline arrives as a `confirm`/
+`cancel` envelope on that same `correlation_id`, then either proceeds into the
+Order + Payment agents or ends the run without ever touching payment.
 
-| Customer intent | Example message | Agents woken |
+## Submission requirements → where met
+
+| # | Requirement | Where it's met |
 | --- | --- | --- |
-| `order_status` | "What is my order status?" | Order |
-| `browse_catalog` | "List me the available products." | Shopping, Pricing, Inventory, Order |
-| `product_advice` | "Find me wireless earbuds under $120." | Shopping, Pricing, Inventory, Fulfillment, Order |
-| `purchase_intent` | "I want to buy this AM-EAR-1002." | Inventory, Fulfillment, Order |
-| `checkout_payment` | "Checkout and pay for my order." | Order, Payment |
+| 1 | Configure Hermes / MyShopper | `SOUL.md` (persona + AgentMart routing rule), loaded and applied by `hermes_core.py::HermesCore`; identity/capabilities in `hermes_a2a_config.json` |
+| 2 | A2A connectivity over Redis Streams | `a2a_bus.py::A2ABus` wraps `XADD`/`XREAD` over three streams — `a2a:requests`, `a2a:responses`, `a2a:heartbeats` — used by `hermes_core.py`, `agentmart_worker.py`, and both front-ends |
+| 3 | 5 LangGraph agents | `agentmart_ecosystem.py::build_graph()` — 5 core AgentMart agents (`shopping_agent`, `pricing_agent`, `inventory_agent`, `fulfillment_agent`, `order_agent`) routed by intent, plus a 6th (`payment_agent`) gated behind HITL for checkout; `hermes_myshopper_node` is the 7th, routing node |
+| 4 | Token usage + elapsed time capture | `OpenRouterHermesClient.complete_with_metrics()` records `prompt_tokens`/`completion_tokens`/`total_tokens`/`elapsed_ms` per model call; carried on each hop's `metrics` and rendered live per-agent (and totalled) in `static/index.html`'s trace panel |
+| 5 | Logging evidence | Structured `logging` in `agentmart_worker.py`, `hermes_web.py`, `hermes_telegram.py` (lifecycle events, cid, errors); a durable audit trail in `a2a_audit.jsonl` (one JSON line per published envelope, secrets redacted — `a2a_bus.py::_audit`); and the Redis streams themselves, inspectable live with `redis-cli XRANGE a2a:requests - +` etc. |
+| 6 | OpenAI / OpenRouter model | `OpenRouterHermesClient` (OpenAI-SDK-compatible) — this deployment points it at **OpenAI directly, model `gpt-4o-mini`**, by setting `OPENAI_API_KEY`/`OPENAI_BASE_URL`/`OPENAI_MODEL` (the client also supports OpenRouter as a fallback path) |
 
-Routing is rule-based rather than model-driven, so a scenario run is
-reproducible and the assertions in `test_scenarios.py` mean something. The
-routing table lives in `INTENT_PATHS` (`agentmart_ecosystem.py`) and is mirrored
-in `hermes_a2a_config.json` under `intent_routing`.
+**Extras beyond the base requirements:**
 
-## Files
+- **Web chat + live hierarchical trace** — `hermes_web.py` + `static/index.html`: every A2A envelope streams into the right-hand trace panel in real time, with per-agent token/timing badges and a click-to-expand drill-down of the raw envelope JSON.
+- **Telegram front-end** — `hermes_telegram.py`, a second adapter over the same `HermesCore`, with inline Approve/Decline buttons for HITL.
+- **HITL checkout gate** — `agentmart_worker.py::handle_request` pauses `checkout_payment` on a real payable order and waits for an explicit approval before any payment agent runs.
+- **Guardrails** — `guardrails.py`: grounding strips any SKU-looking token the real catalog doesn't recognize, and input validation flags prompt-injection phrasing before it reaches the model.
+- **Heartbeats / liveness** — `liveness.py` + `agentmart_worker.py::_publish_heartbeat`: every hop emits a heartbeat, and `GET /agents` reports each agent as `healthy` or `dead` against a TTL.
 
-| File | Purpose |
-| --- | --- |
-| `agentmart_ecosystem.py` | LangGraph implementation of Hermes/MyShopper plus AgentMart agents. |
-| `hermes_a2a_config.json` | Hermes agent configuration for the A2A connection into AgentMart. |
-| `seed_data.py` | Seeds the product listing from `data/products.json` into SQLite. |
-| `catalog.py` | Query helpers the agents use to read the seeded listing. |
-| `orders.py` | Read/write helpers over the order book: orders, payments, draft orders. |
-| `test_scenarios.py` | End-to-end scenario suite for the Hermes + A2A flows. |
-| `a2a_server.py` | Serves the ecosystem over A2A v1.0 so a real agent can call it. |
-| `TESTING.md` | End-to-end test prompts for all three layers, plus A2A list/history. |
-| `BENCHMARK.md` | Model comparison and the reasoning behind the chosen model/effort. |
-| `SOUL.md` | Hermes persona plus the AgentMart routing rule; install to `~/.hermes/`. |
-| `data/products.json` | Source product catalog: products, stock, warehouses, delivery options. |
-| `data/orders.json` | Source order book: customers, orders, payment methods, payments. |
-| `data/agentmart.db` | Generated SQLite database (git-ignored; created by `seed_data.py`). |
-| `requirements.txt` | Python dependencies for the lab. |
-| `.env.example` | Environment variable template for OpenRouter. |
+## Prerequisites
 
-## Setup
+- Python 3.10+
+- Docker (Desktop or Engine) with Compose v2, for the delivery path
+- An OpenAI API key (for `gpt-4o-mini`)
+- Optional: a Telegram bot token from [@BotFather](https://t.me/BotFather), if you want the Telegram front-end
 
-### macOS / Ubuntu
+## Run it
+
+### Docker (delivery)
 
 ```bash
-cd workshop
-./setup.sh
-cd agentmart_agent_ecosystem
-source .venv/bin/activate
+cp .env.example .env
+# edit .env: set OPENAI_API_KEY, OPENAI_BASE_URL=https://api.openai.com/v1,
+# OPENAI_MODEL=gpt-4o-mini, and (optionally) TELEGRAM_BOT_TOKEN
+
+docker compose up --build
 ```
 
-One script creates the virtual environment, installs dependencies, seeds the
-product listing, and copies `.env.example` to `.env`. Useful flags:
-`--force` (rebuild the venv), `--reset-db` (rebuild the seeded data),
-`--no-seed` (skip seeding).
+Open **http://localhost:8000** for the web chat + live trace. Redis, the
+AgentMart worker, and the web front-end all start together; the first boot
+seeds `data/agentmart.db` automatically (`entrypoint.sh`).
 
-### Windows (PowerShell)
+To also start the Telegram adapter (requires `TELEGRAM_BOT_TOKEN` in `.env`):
 
-```powershell
-cd D:\Projects\Building-Autonomous-AI-Agent\workshop\agentmart_agent_ecosystem
+```bash
+docker compose --profile telegram up --build
+```
+
+### Host dev
+
+```bash
 python -m venv .venv
+# Windows
 .\.venv\Scripts\Activate.ps1
+# macOS/Linux
+source .venv/bin/activate
+
 pip install -r requirements.txt
-Copy-Item .env.example .env
 python seed_data.py
+
+# Redis on a non-default host port so it doesn't collide with a local Redis
+docker run -d -p 6380:6379 --name myshopper-redis redis:7
 ```
 
-Edit `.env` and set `OPENROUTER_API_KEY`.
-
-## Installing Hermes
-
-Hermes/MyShopper is **not a separate package** — there is nothing to `pip install`.
-It is the personal buying agent built into this lab:
-
-| Piece | Where it lives |
-| --- | --- |
-| Agent node | `hermes_myshopper_node()` in `agentmart_ecosystem.py` |
-| Agent identity, channels, capabilities | `hermes_a2a_config.json` -> `hermes_agent` |
-| A2A connection into AgentMart | `hermes_a2a_config.json` -> `a2a_connection` |
-| Model client | `OpenRouterHermesClient` in `agentmart_ecosystem.py` |
-
-So "installing Hermes" means installing the lab environment:
+Copy `.env.example` to `.env` and set `OPENAI_API_KEY`, `OPENAI_BASE_URL`,
+`OPENAI_MODEL=gpt-4o-mini`, and `REDIS_PORT=6380` (host dev talks to Redis on
+the host-mapped port; Docker Compose overrides this to the internal
+`redis:6379` for you). Then, in separate terminals:
 
 ```bash
-cd workshop
-./setup.sh                  # venv + dependencies + seeded catalog + .env
-cd agentmart_agent_ecosystem
-source .venv/bin/activate
+python agentmart_worker.py
+python hermes_web.py
+python hermes_telegram.py   # optional, needs TELEGRAM_BOT_TOKEN
 ```
 
-Confirm Hermes is wired up and can reach OpenRouter:
+Verify the model is reachable before a full run:
 
 ```bash
 python agentmart_ecosystem.py --check-model
 ```
 
-This prints the resolved model settings and makes one real call. Without a key it
-reports `api_key : MISSING` and exits non-zero, so it is a safe first check.
-
-## Configuring the Model (OpenRouter + Qwen3.7 Flash)
-
-The lab defaults to **Qwen3.7 Flash** (`qwen/qwen3.7-flash`) through
-OpenRouter's OpenAI-compatible API.
-
-### 1. Get an API key
-
-Create one at <https://openrouter.ai/keys> and put it in `.env`:
+## Testing
 
 ```bash
-OPENROUTER_API_KEY=sk-or-v1-...
+pytest -v                 # 48 unit/integration tests (fakeredis-backed, no network)
+python test_scenarios.py  # 9 end-to-end scenarios, dry-run by default; add --live to call the real model
 ```
 
-### 2. Set the model
-
-`.env` already ships with these settings:
-
-```text
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_MODEL=qwen/qwen3.7-flash
-OPENROUTER_TEMPERATURE=0.2
-OPENROUTER_MAX_TOKENS=6000
-OPENROUTER_REASONING_EFFORT=medium
-```
-
-### 3. How settings resolve
-
-Three layers, first match wins:
-
-| Priority | Source | Use it for |
-| --- | --- | --- |
-| 1 | Environment / `.env` | Your key and per-machine overrides |
-| 2 | `hermes_a2a_config.json` -> `hermes_agent.model` | The agent's declared default |
-| 3 | Built-in defaults in `agentmart_ecosystem.py` | Last resort |
-
-The config block declares the model as part of the agent's identity:
-
-```json
-"model": {
-  "provider": "openrouter",
-  "default_model": "qwen/qwen3.7-flash",
-  "fallback_models": ["deepseek/deepseek-v4-flash-0731", "openai/gpt-oss-120b"],
-  "temperature": 0.2,
-  "max_tokens": 6000,
-  "reasoning_effort": "medium"
-}
-```
-
-`fallback_models` is passed to OpenRouter as its `models` array, so a request is
-automatically retried down the list if the primary model is unavailable.
-
-### 4. Choosing a model
-
-Every model below was tested in **both** roles this lab needs, because passing one
-does not imply passing the other:
-
-- **Hermes tool loop** — does the agent actually *invoke* `a2a_call`, with 25 tool
-  schemas and a large system prompt in context? Several models emit the call as
-  plain text instead, which silently does nothing.
-- **Lab grounding** — do the six agents answer only from the seeded catalog, with
-  no empty replies and no invented SKUs?
-
-| Slug | $/run | vs K3 | Hermes tools | Lab grounding |
-| --- | --- | --- | --- | --- |
-| `qwen/qwen3.7-flash` | $0.0014 | 105x cheaper | yes | yes — **lab default** |
-| `deepseek/deepseek-v4-flash-0731` | $0.0019 | 77x cheaper | yes | yes — fallback, slower |
-| `openai/gpt-oss-120b` | $0.0017 | 86x cheaper | yes | **invented `AM-EAR-1100`** |
-| `qwen/qwen3-30b-a3b-instruct-2507` | $0.0021 | 70x cheaper | **no — printed JSON as text** | yes |
-| `mistralai/mistral-nemo` | $0.0005 | 272x cheaper | **no — "tool not available"** | yes |
-| `moonshotai/kimi-k3` | $0.1470 | — | yes | yes |
-
-`$/run` is one six-agent `product_advice` request at this lab's measured token
-profile (~19K prompt, ~6K completion).
-
-Two lessons worth keeping:
-
-- **A model that passes a one-shot tool probe can still fail a real agent loop.**
-  `qwen3-30b-a3b-instruct` called the tool perfectly in isolation and emitted the
-  same call as message text once Hermes' full prompt was in play.
-- **Cheapest is not safe.** `mistral-nemo` is the cheapest tool-capable option and
-  claimed the tool did not exist; `gpt-oss-120b` grounded fine in isolation and
-  then invented a SKU in the full chain — the exact failure this lab teaches against.
-
-Reasoning models (including the default) share `max_tokens` between reasoning and
-the visible reply, so keep `OPENROUTER_MAX_TOKENS` generous and
-`OPENROUTER_REASONING_EFFORT=medium` — otherwise agents return empty strings.
-See `BENCHMARK.md` for the measurements behind both the model and the effort level.
-
-### 5. Running the agents on OpenAI directly
-
-Setting `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL` points the six
-AgentMart agents at OpenAI's own endpoint; they take precedence over the
-`OPENROUTER_*` values. `gpt-5.6-luna` runs the six-agent chain in ~21s against
-~76s on `qwen/qwen3.7-flash`, for roughly 8x the cost per run.
-
-The client reshapes the request for that endpoint, because the gpt-5.6 family
-rejects `max_tokens` (wants `max_completion_tokens`), rejects any temperature but
-its default, and takes `reasoning_effort` as a top-level parameter rather than
-OpenRouter's `reasoning` object. `--check-model` prints which endpoint is live.
-
-**Hermes needs one extra step on this path.** Every Hermes turn carries tool
-schemas, and `gpt-5.6-luna` rejects function tools together with
-`reasoning_effort` — including when the parameter is omitted. It must be present
-and set to `none`, a level Hermes' effort ladder will not emit on its own. A
-`custom_providers` entry forces it onto the wire via `extra_body`, after which
-Hermes runs against OpenAI directly with tools working. Section 8 of
-`BENCHMARK.md` has the full parameter matrix and the exact config block.
-
-Switch model for a single run without editing any file:
-
-```bash
-OPENROUTER_MODEL=moonshotai/kimi-k2.6 python agentmart_ecosystem.py --check-model
-```
-
-Because the client is OpenAI-compatible, any other OpenRouter slug
-(`openai/...`, `anthropic/...`) works the same way.
-
-## Hermes A2A Configuration
-
-`hermes_a2a_config.json` makes the A2A handoff explicit:
-
-- Hermes agent identity: `hermes_myshopper`
-- Hermes role: represents the customer
-- Supported channels: Telegram, WhatsApp, WebChat
-- OpenRouter model settings: read from the `.env` variables
-- A2A task endpoint: `agentmart://a2a/tasks`
-- Heartbeat stream: `agentmart.a2a.heartbeats`
-- Capability registry: `agentmart.a2a.capabilities`
-- Target AgentMart agents: Shopping, Pricing, Inventory, Fulfillment, and Order
-
-The LangGraph demo loads this file and embeds the connection metadata into the A2A envelope that Hermes sends to AgentMart.
-
-## Seeded Product Listing
-
-`seed_data.py` loads `data/products.json` into `data/agentmart.db` (SQLite,
-standard library only) across four tables: `products`, `inventory`,
-`warehouses`, and `fulfillment_options`.
-
-```bash
-python seed_data.py                # create/refresh the database
-python seed_data.py --reset        # drop and rebuild every table
-python seed_data.py --list         # print the seeded listing
-python seed_data.py --list --category audio/earbuds --max-price 120
-```
-
-Seeding is idempotent: re-running rewrites every row from the JSON source, so
-editing `data/products.json` and re-running is the intended way to change the
-catalog.
-
-The Shopping, Pricing, Inventory, and Fulfillment agents receive this listing in
-their prompts, so they cite real SKUs, prices, stock levels, and delivery ETAs.
-Narrow what the agents see with `--category` and `--max-price`:
-
-```bash
-python agentmart_ecosystem.py --dry-run --category audio/earbuds --max-price 120 \
-  "Find me wireless earbuds under $120 with good battery life."
-```
-
-If the database has not been seeded, the run still completes and the agents are
-told the catalog is unavailable.
-
-## Run
-
-Dry-run mode does not call the model. It is useful for checking the LangGraph/A2A flow:
-
-```bash
-python agentmart_ecosystem.py --dry-run "Find me wireless earbuds under $120 with good battery life."
-```
-
-Live mode calls OpenRouter:
-
-```bash
-python agentmart_ecosystem.py "Find me wireless earbuds under $120 with good battery life."
-```
-
-## Flow
-
-1. Hermes/MyShopper receives the customer request from a chat channel.
-2. Hermes classifies the intent and creates an A2A task envelope addressed to the
-   AgentMart ecosystem. Every later hop reuses that envelope's `correlation_id`.
-3. The router wakes only the agents that intent needs (see the table above).
-4. Each agent hop appends its own envelope to `a2a_log`, moving through the
-   `proposed -> accepted -> in_progress -> completed` lifecycle from Part 7.
-5. The Order Agent answers from the order book, or creates a draft order.
-6. On a checkout intent the Payment Agent settles it — simulated (see below).
-
-## Running It From Telegram
-
-A real session against the running system: Telegram -> Hermes/MyShopper
--> A2A over HTTP -> the AgentMart graph. The `a2a_call` badges under each reply are
-Hermes invoking the peer. Every SKU, price and stock figure comes from the seeded
-catalog, not from the model's own knowledge.
-
-Prerequisites: `a2a_server.py` running, the peer registered in `~/.hermes/config.yaml`,
-and the routing rule from `SOUL.md` installed. See `TESTING.md` for the full checklist.
-
-### 1. Shortlist, then buy
-
-![Telegram: AgentMart returns a shortlist of seeded earbuds, then processes a purchase](screenshot/01-telegram-shortlist-and-buy.png)
-
-*"Ask agentmart to find me wireless earbuds under $120 with good battery life."*
-fires `a2a_list` then `a2a_call`, and AgentMart answers with seeded SKUs — Aurora
-Buds Pro (`AM-EAR-1001`, $109, 32h battery) down to Tidal Mini Buds (`AM-EAR-1005`,
-$39), each with real stock counts and delivery options.
-
-This is the check that matters: a reply naming real-world brands means the A2A call
-never happened and the model answered from memory.
-
-### 2. Fulfillment catches a mismatch
-
-![Telegram: Hermes notices the order contains a power bank and travel hub, not the earbuds](screenshot/02-telegram-fulfillment-mismatch.png)
-
-Asked to proceed to fulfillment, Hermes reads back what the order book actually
-contains — `AM-PWR-5001` Aurora PowerCell and `AM-PWR-5002` Kestrel Travel Hub —
-notices that is **not** the `AM-EAR-1002` earbuds that were asked for, stops, and
-asks whether to cancel or correct. It does not quietly proceed.
-
-That behaviour is the `SOUL.md` rule working: relay what AgentMart returned, and
-never paper over a discrepancy with something more plausible.
-
-### 3. Order status
-
-![Telegram: full order status showing payment, fulfillment, ETA and contents](screenshot/03-telegram-order-status.png)
-
-`order_status` routes to the Order Agent alone — no shopping, pricing, inventory
-or fulfillment agent is woken — and returns payment state, simulated auth ref,
-locker pickup, ETA and line items straight from the order book.
-
-### What capture 1 caught: prohibitions read as instructions
-
-The purchase in capture 1 settled the customer's **pre-existing** order
-`AM-ORD-20260915-0003` (power bank + travel hub, $93.00) instead of drafting a new
-one for `AM-EAR-1002`. Captures 2 and 3 are the system noticing its own mistake.
-
-The cause was in `classify_intent`, and it is worth understanding because it is a
-general hazard when an LLM front-end drives a rule-based router.
-
-Hermes asked correctly. What it sent was:
-
-> The customer wants to buy SKU AM-EAR-1002 (Nimbus Air 2). Please create a draft
-> order for quantity 1 ... **Do not charge or capture payment**; just confirm the
-> draft order details and next **checkout** step.
-
-Both guardrails — the phrase forbidding payment, and the words "checkout step" —
-matched the `checkout_payment` rules. The router read a *prohibition* as a
-*command*, routed to the Payment Agent, found no order id, fell back to
-`find_payable_order()`, and settled whatever unpaid order the customer already had.
-
-A remote agent states its safety constraints inline, and those constraints name the
-exact capability they are forbidding. The lab's own test phrasings are short and
-human ("I want to buy this AM-EAR-1002."), so nothing caught it. Across the real
-session, **four of seven** requests routed to `checkout_payment`, including three
-that said "Do not take any payment, refund, or fulfillment action."
-
-Fixed in four parts:
-
-1. `strip_prohibitions()` removes negated clauses (`do not ...`, `without ...`,
-   `never ...`) up to their clause boundary before any rule runs.
-2. An explicit `draft order` request outranks every payment word trailing it.
-3. `checkout` followed by `step`/`process`/`flow`/`page` is a noun phrase, not an
-   instruction to charge; `order summary` and `order_status_lookup` are status reads.
-4. `buy` must be intentional — "wants to buy" is purchase intent, "where to buy" is
-   advice. And a request naming an existing order id can never fall through to
-   `product_advice`.
-
-`test_scenarios.py` now asserts all 14 phrasings, human and agent-generated, so a
-prohibition can never again be read as an instruction:
-
-```bash
-python test_scenarios.py -s intent-routing   # or just: python test_scenarios.py
-```
-
-## Seeded Order Book
-
-`data/orders.json` seeds three customers, five orders across every lifecycle
-state, their payment methods, and their payment history. This is what makes
-"what is my order status" and "checkout and pay" resolve against real rows.
-
-```bash
-python seed_data.py --list-orders    # print the seeded order book
-```
-
-| Customer | Channel | Orders |
-| --- | --- | --- |
-| `CUST-1001` Wei Ling Tan | Telegram | delivered, in_transit, **awaiting_payment** |
-| `CUST-1002` Arun Prakash | WhatsApp | packed |
-| `CUST-1003` Mei Chen | WebChat | cancelled (refunded) |
-
-`CUST-1001` is the default customer, and its `awaiting_payment` order is what a
-bare "checkout and pay" settles. Override with `--customer`.
-
-### Payments are simulated
-
-The Payment Agent writes `authorized` then `captured` rows into the local SQLite
-database and generates a `sim_auth_...` reference. **No payment processor is ever
-contacted, no card number is stored, and no money moves.** The agent is
-instructed to say so in its reply.
-
-## Scenario Suite
-
-`test_scenarios.py` sends one customer message per scenario through the real
-LangGraph workflow, then asserts on what actually happened: the intent chosen,
-the agents woken, the A2A envelope chain, and the resulting rows in the order
-book.
-
-```bash
-python test_scenarios.py                  # all scenarios, dry-run
-python test_scenarios.py --list           # list scenario names
-python test_scenarios.py -s buy-this      # run one
-python test_scenarios.py --verbose        # show the A2A hops and agent replies
-python test_scenarios.py --live           # call OpenRouter for real
-```
-
-| Scenario | Message | What it proves |
-| --- | --- | --- |
-| `order-status` | "What is my order status?" | Only the Order Agent wakes; the real order book is read |
-| `order-status-specific` | "Where is my order AM-ORD-...?" | An order id scopes the lookup to that one order |
-| `order-status-unknown` | "Where is my order AM-ORD-9999-9999?" | A missing order degrades gracefully, no crash |
-| `list-products` | "List me the available products." | Browsing skips the Fulfillment Agent; real SKUs reach the prompts |
-| `buy-this` | "I want to buy this AM-EAR-1002." | A real draft order is created and stops at `awaiting_payment` |
-| `checkout-and-pay` | "Checkout and pay for my order." | The unpaid order is settled; a simulated receipt is written |
-| `product-advice` | "Find me wireless earbuds under $120." | The original full five-agent pipeline still runs |
-| `buy-then-checkout` | purchase, then settle that order | Two turns on one order id = two distinct A2A tasks |
-
-Dry-run is the default, so the whole suite passes with **no OpenRouter key**:
-everything asserted is the deterministic part of the system — routing, the A2A
-envelope chain, and order/payment state. `--live` sends the same scenarios
-through the model as well.
-
-The suite re-seeds the order book before each scenario and again at the end, so
-runs are isolated and the lab is left in its seeded state. Pass `--no-reseed` to
-inspect what a run left behind.
+`test_scenarios.py` covers the 5 intents across 7 named scenarios (including
+two order-status edge cases and a chained buy-then-checkout run), plus an
+intent-routing check over 14 phrasings and a chained scenario — 9 checks in
+total. Beyond the automated suites, a live adversarial matrix — the 5 core
+intents plus prompt-injection and off-topic probes (7 phrasings total) — was
+run end-to-end against the real model to confirm `guardrails.py`'s grounding
+and input-validation hold outside the dry-run harness.
+
+## Guardrails
+
+`guardrails.py` enforces two things on every request/response:
+
+- **Grounding** (`ground_response`) — scans outgoing replies for anything
+  SKU-shaped (`AM-XXX-XXXX`) that isn't in the real seeded catalog and replaces
+  it with `[unverified SKU]`, so the model can never sell a product that
+  doesn't exist. Real order ids and customer ids share the same surface shape
+  and are explicitly preserved.
+- **Prompt-injection / input validation** (`validate_input`) — strips control
+  characters, caps input length, and flags phrases like "ignore previous
+  instructions" or "reveal the system prompt" before the text reaches a model.
+
+## HITL (human-in-the-loop)
+
+A `checkout_payment` request never pays automatically. `agentmart_worker.py`
+looks up a real payable order, publishes an `input_required` envelope with the
+amount, and blocks on `await_confirmation` until the customer answers. The web
+UI and Telegram bot both render this as an Approve/Decline choice; only an
+explicit `confirm` resumes the graph into the Order and Payment agents. A
+decline or a 120s timeout ends the run with no payment made.
+
+## Heartbeats & liveness
+
+Every agent hop the worker publishes also emits a heartbeat onto
+`a2a:heartbeats` (`liveness.py` + `_publish_heartbeat`). `GET /agents` on the
+web front-end replays unseen heartbeats into an in-memory `Liveness` tracker
+and reports each known agent as `healthy` or `dead` once it's gone silent
+longer than a TTL (default 6s) — surfaced as the status dots above the chat
+panel.
+
+## Repo layout
+
+| File | Role |
+| --- | --- |
+| `a2a_bus.py` | Thin Redis Streams client (`XADD`/`XREAD`) plus the JSONL audit log |
+| `agentmart_worker.py` | The A2A consumer: runs the LangGraph graph per request, streams hops, HITL checkout gate, heartbeats |
+| `agentmart_ecosystem.py` | The LangGraph graph itself — state, agent nodes, intent routing, the OpenAI/OpenRouter model client |
+| `hermes_core.py` | Shared client used by both front-ends: loads `SOUL.md`, validates input, publishes requests, streams responses, grounds replies |
+| `hermes_web.py` | FastAPI app: chat UI, `/chat`, `/events/{cid}` (SSE trace), `/confirm`, `/agents` |
+| `hermes_telegram.py` | Telegram adapter over the same `HermesCore`, with inline Approve/Decline for HITL |
+| `guardrails.py` | Grounding (no invented SKUs) and prompt-injection/input validation |
+| `liveness.py` | Pure last-seen/TTL tracker used for heartbeat-based dead-agent detection |
+| `static/index.html` | The chat + live A2A trace single-page UI |
+| `seed_data.py` | Seeds `data/agentmart.db` (SQLite) from `data/products.json` / `data/orders.json` |
+| `catalog.py` | Read-side helpers over the seeded product catalog |
+| `orders.py` | Read/write helpers over customers, orders, and simulated payments |
+
+## Payments are simulated
+
+`orders.py` generates `sim_`-prefixed payment references and writes them to
+the local SQLite database. **No real payment processor is ever contacted, no
+card data is stored, and no money moves** — this is a workshop/demo checkout
+flow only.
