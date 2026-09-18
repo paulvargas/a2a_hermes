@@ -1,227 +1,124 @@
-# Building Autonomous AI Agents
+# 🛍️ MyShopper (Hermes) — your personal AI shopping assistant
 
-Workshop material for building autonomous AI agents from a single assistant into a coordinated agent ecosystem.
+MyShopper is a friendly AI shopping assistant you can chat with — in your **web browser** or on **Telegram**. Behind the scenes it quietly coordinates a small team of specialist "agents" (product search, pricing, stock, delivery, and ordering) to find products, check your orders, and place a purchase for you.
 
-## Day 3: OpenClaw/Hermes/NanoClaw Personal Buying Agent
+Before it ever "buys" anything, it **stops and asks you to approve** — so you're always in control.
 
-Day 3 focuses on building **Hermes/MyShopper**, a personal buying agent owned by the customer. Unlike the AgentMart agents built earlier, MyShopper represents the customer and communicates with AgentMart through **A2A**.
+> 🧪 **This is a demo.** All payments are **simulated** — no real money is ever charged, and no real payment company is contacted.
 
-The customer interacts with MyShopper through Telegram, WhatsApp, or WebChat. MyShopper then coordinates with the AgentMart ecosystem to search, price, reserve, fulfill, and place an order.
+---
 
-## Prerequisites
+## What you'll need (one‑time setup)
 
-- Python 3.10 or newer
-- An OpenRouter account and API key (<https://openrouter.ai/keys>)
-- On Ubuntu/Debian: `sudo apt install python3 python3-venv python3-pip`
+Just three things:
 
-## Getting Started
+1. **Docker Desktop** — the free program that runs the app for you.
+   Download it here → https://www.docker.com/products/docker-desktop/
+   Install it, open it, and wait until it says it's **running**.
 
-The hands-on lab lives in `workshop/agentmart_agent_ecosystem`. It implements the
-architecture below with LangGraph, an A2A envelope, and a seeded product catalog.
+2. **An OpenAI key** — this is the "brain" that powers the chat.
+   Get one here → https://platform.openai.com/api-keys
+   Sign in, click **Create new secret key**, and copy it. It looks like `sk-...`.
+   *(This may require adding a small amount of billing credit to your OpenAI account.)*
 
-### macOS / Ubuntu
+3. **(Only if you want Telegram)** A Telegram bot — takes 2 minutes, steps are in the **Telegram** section below.
 
-```bash
-cd workshop
-./setup.sh
-cd agentmart_agent_ecosystem
-source .venv/bin/activate
+---
+
+## Install & run (about 5 minutes)
+
+**Step 1 — Get the code.**
+Click the green **Code** button at the top of this page → **Download ZIP**, then unzip it.
+*(Or, if you use git: `git clone https://github.com/paulvargas/a2a_hermes.git`)*
+
+**Step 2 — Open a terminal in the app folder.**
+The app lives in the folder **`workshop/agentmart_agent_ecosystem`**.
+- **Windows:** open **PowerShell**, then move into that folder, e.g.
+  `cd path\to\a2a_hermes\workshop\agentmart_agent_ecosystem`
+- **Mac:** open **Terminal**, then `cd path/to/a2a_hermes/workshop/agentmart_agent_ecosystem`
+
+**Step 3 — Add your OpenAI key.**
+In that folder there's a file called **`.env.example`**. Make a **copy** of it and name the copy **`.env`**.
+Open `.env` in any text editor and set these two lines:
+```
+OPENAI_API_KEY=sk-...paste-your-key-here...
+OPENAI_MODEL=gpt-4o-mini
+```
+Save the file. *(You'll add a Telegram line later, only if you want Telegram.)*
+
+**Step 4 — Start the app (one command).**
+Make sure Docker Desktop is open, then run:
+```
+docker compose up --build
+```
+The **first** run takes a few minutes while it downloads and sets everything up. When the text stops scrolling and you see a line mentioning **"Uvicorn running"**, it's ready.
+
+**Step 5 — Open it in your browser:**
+👉 **http://localhost:8000**
+
+**To stop the app:** press **Ctrl + C** in the terminal (or run `docker compose down`).
+
+---
+
+## Try it in your browser
+
+Type any of these into the chat box on the **left**, and watch the **right‑hand panel** show the agents working together in real time:
+
+- `find wireless earbuds under $120 with good battery life`
+- `what is my order status?`
+- `I want to buy this AM-EAR-1002`
+- `Checkout and pay for my order.`
+  → MyShopper will pause and ask **"Confirm purchase of $93.00?"** — click **Approve** to finish, or **Decline** to cancel. (Remember: it's a simulated payment.)
+
+---
+
+## Test it on Telegram (chat from your phone)
+
+**Step 1 — Create your own bot (one‑time, ~2 minutes).**
+- In Telegram, search for **@BotFather** (the official one with a blue checkmark) and open the chat.
+- Send **`/newbot`** and follow the prompts: choose a display name, then a username that ends in **`bot`**.
+- BotFather replies with a **token** that looks like `123456789:AAE...`. **Copy it.**
+
+**Step 2 — Give the app your token.**
+Open your **`.env`** file (from Step 3 above) and add this line:
+```
+TELEGRAM_BOT_TOKEN=123456789:AAE...paste-your-token-here...
+```
+Save it.
+
+**Step 3 — Start the app with Telegram switched on:**
+```
+docker compose --profile telegram up --build
 ```
 
-`setup.sh` finds a Python 3.10+ interpreter, creates the virtual environment,
-installs dependencies, seeds the product listing into SQLite, and copies
-`.env.example` to `.env`.
+**Step 4 — Chat with your bot.**
+- Open your bot in Telegram (BotFather gave you a `t.me/your_bot_name` link), press **Start**, and try:
+  - `find wireless earbuds under $120`
+  - `what is my order status?`
+  - `I want to buy this AM-EAR-1002`
+  - `Checkout and pay for my order.` → the bot shows **Approve / Decline** buttons — tap **Approve** to complete the (simulated) payment.
 
-### Windows (PowerShell)
+Same assistant, now on your phone. 📱
 
-```powershell
-cd workshop\agentmart_agent_ecosystem
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item .env.example .env
-python seed_data.py
-```
+---
 
-### Install Hermes
+## Good to know
 
-Hermes/MyShopper is not a separate package — it is the personal buying agent
-built into the lab (`hermes_myshopper` node plus `hermes_a2a_config.json`).
-Running `setup.sh` above installs it. Verify it can reach the model with:
+- 💳 **No real charges.** Every payment is simulated for this demo.
+- 🔒 **Your keys stay on your computer.** They live only in your `.env` file and are never uploaded or shared.
+- 🔁 **Want to redo the checkout?** Once the sample order is paid, refresh the demo data with:
+  ```
+  docker compose exec agentmart-worker python seed_data.py
+  ```
+- ❓ **Nothing loads at localhost:8000?** Give it another minute on first run, make sure Docker Desktop is running, and check the terminal for a line saying "Uvicorn running".
 
-```bash
-python agentmart_ecosystem.py --check-model
-```
+---
 
-### Configure the model (OpenRouter + Qwen3.7 Flash)
+## For developers
 
-The lab talks to **Qwen3.7 Flash** (`qwen/qwen3.7-flash`) through OpenRouter's
-OpenAI-compatible API. Create a key at <https://openrouter.ai/keys> and set it
-in `.env`:
+Full technical documentation — architecture diagram, how the A2A / Redis Streams / LangGraph pieces fit together, the submission‑requirement mapping, tests, and the demo recording script — lives here:
 
-```text
-OPENROUTER_API_KEY=sk-or-v1-...
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_MODEL=qwen/qwen3.7-flash
-OPENROUTER_TEMPERATURE=0.2
-OPENROUTER_MAX_TOKENS=6000
-OPENROUTER_REASONING_EFFORT=low
-```
+- **Technical README:** [`workshop/agentmart_agent_ecosystem/README.md`](workshop/agentmart_agent_ecosystem/README.md)
+- **Demo script:** [`workshop/agentmart_agent_ecosystem/docs/DEMO_SCRIPT.md`](workshop/agentmart_agent_ecosystem/docs/DEMO_SCRIPT.md)
 
-Settings resolve environment first, then the `hermes_agent.model` block in
-`hermes_a2a_config.json`, then built-in defaults — so `.env` overrides the
-config without editing it. The config also declares `fallback_models`
-(`deepseek/deepseek-v4-flash-0731`, `openai/gpt-oss-120b`), which OpenRouter
-retries if the primary model is unavailable.
-
-### Run the ecosystem
-
-Set `OPENROUTER_API_KEY` in `.env`, then:
-
-```bash
-# Walk the LangGraph/A2A flow without calling a model
-python agentmart_ecosystem.py --dry-run "Find me wireless earbuds under $120 with good battery life."
-
-# Live run through OpenRouter
-python agentmart_ecosystem.py "Find me wireless earbuds under $120 with good battery life."
-```
-
-See `workshop/README.md` for lab details and `workshop/agentmart_agent_ecosystem/README.md`
-for the full walkthrough, including how to edit and re-seed the product catalog.
-
-## Repository Layout
-
-| Path | Contents |
-| --- | --- |
-| `workshop/` | Hands-on labs and the `setup.sh` environment script. |
-| `workshop/agentmart_agent_ecosystem/` | Day 3 lab: LangGraph agents, A2A config, seeded catalog. |
-| `slides/` | Lecture deck and the branded slide build script. |
-| `teleprompter_slides/` | Rendered slide images used by `teleprompter.html`. |
-| `teleprompter.html` | Presenter view for delivering the workshop. |
-| `docs/` | Lesson PDFs, notes, and requirement screenshots. |
-
-## Architecture (Conceptual)
-
-The target design from the requirement screenshots:
-
-```mermaid
-flowchart TD
-    Customer[Customer]
-    Chat[Telegram / WhatsApp / WebChat]
-    MyShopper[MyShopper<br/>Personal Buying Agent]
-    A2A[A2A]
-
-    subgraph AgentMart[AgentMart Agent Ecosystem]
-        Shopping[Shopping Agent]
-        Pricing[Pricing Agent]
-        Inventory[Inventory Agent]
-        Fulfillment[Fulfillment Agent]
-        Order[Order Agent]
-    end
-
-    Customer --> Chat
-    Chat --> MyShopper
-    MyShopper --> A2A
-    A2A --> AgentMart
-
-    AgentMart --> Shopping
-    AgentMart --> Pricing
-    Shopping --> Inventory
-    Pricing --> Fulfillment
-    Inventory --> Order
-    Fulfillment --> Order
-```
-
-## Implemented Flow (Lab)
-
-`workshop/agentmart_agent_ecosystem/agentmart_ecosystem.py` builds this as a
-**linear LangGraph pipeline**, so each agent can read every upstream result:
-
-```mermaid
-flowchart LR
-    Customer[Customer] --> Chat[Telegram / WhatsApp / WebChat]
-    Chat --> H
-
-    subgraph Hermes[Hermes / MyShopper]
-        H[hermes_myshopper<br/>builds the A2A envelope]
-    end
-
-    subgraph AgentMart[AgentMart Agent Ecosystem]
-        S[shopping_agent] --> P[pricing_agent]
-        P --> I[inventory_agent]
-        I --> F[fulfillment_agent]
-        F --> O[order_agent]
-    end
-
-    H -->|A2A| S
-    O --> Reply[Customer-ready recommendation]
-
-    DB[(agentmart.db<br/>seeded catalog)] -.-> S
-    DB -.-> P
-    DB -.-> I
-    DB -.-> F
-```
-
-| Step | Node | Produces |
-| --- | --- | --- |
-| 1 | `hermes_myshopper` | A2A envelope addressed to AgentMart |
-| 2 | `shopping_agent` | 3 candidate SKUs from the seeded catalog |
-| 3 | `pricing_agent` | Value ranking and price risks |
-| 4 | `inventory_agent` | Stock status and restock dependencies |
-| 5 | `fulfillment_agent` | Delivery path, ETA, and cost |
-| 6 | `order_agent` | Final recommendation for the customer |
-
-The run returns the full graph state as JSON, including a `transcript` array with
-each agent's output and the A2A envelope Hermes sent.
-
-## Agent Responsibilities
-
-| Agent | Represents | Main responsibility |
-| --- | --- | --- |
-| Customer | User | Requests products or buying help through chat. |
-| MyShopper | Customer | Understands customer intent and negotiates with AgentMart through A2A. |
-| Shopping Agent | AgentMart | Searches for suitable products and options. |
-| Pricing Agent | AgentMart | Checks pricing, discounts, and affordability. |
-| Inventory Agent | AgentMart | Confirms stock and availability. |
-| Fulfillment Agent | AgentMart | Handles delivery or pickup constraints. |
-| Order Agent | AgentMart | Finalizes the purchase workflow. |
-
-In the lab, the Shopping, Pricing, Inventory, and Fulfillment agents read a seeded
-catalog (`workshop/agentmart_agent_ecosystem/data/products.json`) so they reason over
-real SKUs, prices, stock levels, and delivery options rather than invented ones.
-
-## Workshop Progression
-
-```text
-Day 1: Build an Agent
-   |
-   v
-Day 2: Build an Agent Team
-   |
-   v
-Day 3: Build an Agent Ecosystem
-```
-
-## Troubleshooting
-
-| Symptom | Fix |
-| --- | --- |
-| `The venv module is missing` | `sudo apt install python3.X-venv` (the script names your version) |
-| `api_key : MISSING` from `--check-model` | Set `OPENROUTER_API_KEY` in `workshop/agentmart_agent_ecosystem/.env` |
-| `catalog unavailable` in agent output | Run `python seed_data.py` in the lab folder |
-| `401` / `No auth credentials` from OpenRouter | The key is wrong or revoked; create a new one at <https://openrouter.ai/keys> |
-| Model slug not found | Check the slug against <https://openrouter.ai/models>; try a fallback such as `moonshotai/kimi-k2.6` |
-
-Re-run setup from scratch at any time:
-
-```bash
-cd workshop
-./setup.sh --force --reset-db
-```
-
-## Reference Images
-
-The conceptual architecture diagram is based on the provided requirement screenshots:
-
-- `docs/1000099929.png`
-- `docs/1000099932.png`
+*Built on the "Building Autonomous AI Agents" workshop (Day 3).*
