@@ -736,7 +736,10 @@
   function addApprovalCard(env) {
     clearTyping();
     var payload = env.payload || {};
-    var summary = payload.summary || payload.text || payload.reply ||
+    // The worker's checkout gate emits payload.prompt (e.g. "Confirm purchase
+    // of $92.50?"); summary/text/reply are kept as fallbacks for other
+    // input_required producers.
+    var summary = payload.summary || payload.text || payload.prompt || payload.reply ||
       "Hermes needs your confirmation before proceeding with this action.";
     var taskId = env.task_id;
 

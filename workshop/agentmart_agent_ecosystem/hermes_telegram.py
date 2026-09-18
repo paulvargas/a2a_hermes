@@ -150,9 +150,13 @@ async def _handle_envelope(message, core, env: dict, seen_senders: set, bot_data
     if state == "input_required":
         cid = env.get("correlation_id")
         task_id = env.get("task_id")
+        # The worker's checkout gate emits payload["prompt"] (e.g. "Confirm
+        # purchase of $92.50?"); summary/text/reply stay as fallbacks for any
+        # other input_required producer.
         summary = (
             payload.get("summary")
             or payload.get("text")
+            or payload.get("prompt")
             or payload.get("reply")
             or "Hermes needs your confirmation before proceeding with this action."
         )
