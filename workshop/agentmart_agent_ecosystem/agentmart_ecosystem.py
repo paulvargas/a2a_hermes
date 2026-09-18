@@ -5,6 +5,7 @@ import json
 import operator
 import os
 import re
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -147,9 +148,18 @@ class OpenRouterHermesClient:
         self.http_referer = os.getenv("OPENROUTER_HTTP_REFERER", "http://localhost")
         self.app_title = os.getenv("OPENROUTER_APP_TITLE", "AgentMart Workshop")
 
-    def complete(self, agent_name: str, system_prompt: str, user_prompt: str) -> str:
+    def complete_with_metrics(
+        self, agent_name: str, system_prompt: str, user_prompt: str
+    ) -> tuple[str, dict[str, int]]:
+        start = time.perf_counter()
         if self.dry_run or not self.api_key:
-            return self._dry_run_reply(agent_name, user_prompt)
+            text = self._dry_run_reply(agent_name, user_prompt)
+            return text, {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "elapsed_ms": int((time.perf_counter() - start) * 1000),
+            }
 
         from openai import OpenAI
 
@@ -183,7 +193,18 @@ class OpenRouterHermesClient:
             )
 
         response = client.chat.completions.create(**kwargs)
-        return response.choices[0].message.content or ""
+        usage = getattr(response, "usage", None)
+        metrics = {
+            "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+            "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+            "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+            "elapsed_ms": int((time.perf_counter() - start) * 1000),
+        }
+        return (response.choices[0].message.content or ""), metrics
+
+    def complete(self, agent_name: str, system_prompt: str, user_prompt: str) -> str:
+        text, _ = self.complete_with_metrics(agent_name, system_prompt, user_prompt)
+        return text
 
     @staticmethod
     def _dry_run_reply(agent_name: str, user_prompt: str) -> str:
