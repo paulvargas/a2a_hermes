@@ -104,6 +104,26 @@
   }
   .msg.hermes .avatar { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color:#fff; }
   .msg.hermes .bubble { background: var(--hermes-bubble); border: 1px solid var(--line); border-top-left-radius: 5px; }
+  /* Lightweight markdown rendering for Hermes/assistant text only (see mdToHtml). */
+  .msg.hermes .bubble p { margin: 0 0 10px; }
+  .msg.hermes .bubble p:last-child { margin-bottom: 0; }
+  .msg.hermes .bubble h1, .msg.hermes .bubble h2, .msg.hermes .bubble h3,
+  .msg.hermes .bubble h4, .msg.hermes .bubble h5, .msg.hermes .bubble h6 {
+    margin: 14px 0 8px; line-height: 1.3; font-weight: 700; color: var(--text);
+  }
+  .msg.hermes .bubble h1:first-child, .msg.hermes .bubble h2:first-child,
+  .msg.hermes .bubble h3:first-child, .msg.hermes .bubble h4:first-child {
+    margin-top: 0;
+  }
+  .msg.hermes .bubble h1 { font-size: 17px; }
+  .msg.hermes .bubble h2 { font-size: 15.5px; }
+  .msg.hermes .bubble h3 { font-size: 14.5px; }
+  .msg.hermes .bubble h4, .msg.hermes .bubble h5, .msg.hermes .bubble h6 { font-size: 14px; }
+  .msg.hermes .bubble ul, .msg.hermes .bubble ol { margin: 6px 0 10px; padding-left: 20px; }
+  .msg.hermes .bubble li { margin-bottom: 4px; }
+  .msg.hermes .bubble li:last-child { margin-bottom: 0; }
+  .msg.hermes .bubble strong { font-weight: 700; color: var(--text); }
+  .msg.hermes .bubble em { font-style: italic; }
   .msg.user { align-self: flex-end; flex-direction: row-reverse; }
   .msg.user .avatar { background: #232838; color: var(--text-dim); }
   .msg.user .bubble { background: var(--user-bubble); color: #fff; border-top-right-radius: 5px; box-shadow: 0 6px 18px rgba(79,107,255,0.28); }
@@ -177,6 +197,22 @@
   .trace-empty { color: var(--text-faint); font-size: 13px; text-align: center; margin-top: 60px; line-height: 1.6; }
   .trace-empty .big { font-size: 26px; margin-bottom: 8px; opacity: .5; }
 
+  /* One section per customer message: the message that triggered the run,
+     followed by its own indented request/response tree underneath. */
+  .trun { margin-bottom: 24px; }
+  .trun:last-child { margin-bottom: 4px; }
+  .trun-head {
+    display: flex; align-items: flex-start; gap: 8px;
+    margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line);
+  }
+  .trun-quote { flex: none; color: var(--accent); font-size: 15px; line-height: 1.2; opacity: .8; }
+  .trun-body { min-width: 0; }
+  .trun-label {
+    font-size: 10px; letter-spacing: .8px; text-transform: uppercase;
+    color: var(--text-faint); margin-bottom: 3px;
+  }
+  .trun-msg { font-size: 13.5px; font-weight: 600; color: var(--text); line-height: 1.4; word-wrap: break-word; }
+
   .timeline { position: relative; padding-left: 20px; }
   .timeline::before {
     content: ""; position: absolute; left: 5px; top: 6px; bottom: 6px; width: 2px;
@@ -194,8 +230,19 @@
     background: var(--bg-elev-2); border: 1px solid var(--line-soft); border-radius: 11px;
     padding: 11px 13px; font-family: var(--mono);
   }
-  .tcard-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .route { font-size: 12.5px; color: var(--text); font-weight: 600; }
+  .tcard-top {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    cursor: pointer; border-radius: 6px; outline: none;
+  }
+  .tcard-top:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .tcard-top:hover .route { color: var(--accent); }
+  .chev {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 12px; flex: none; color: var(--text-faint); font-size: 9px;
+    transition: transform .15s ease, color .15s ease;
+  }
+  .chev.open { transform: rotate(90deg); color: var(--text-dim); }
+  .route { font-size: 12.5px; color: var(--text); font-weight: 600; transition: color .15s ease; }
   .route .arrow { color: var(--text-faint); margin: 0 3px; }
   .badge {
     font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
@@ -219,6 +266,43 @@
   .tmeta .step { color: var(--text-dim); font-weight: 700; }
   .tmeta .sep { opacity: .45; }
   .tmeta .offset { color: var(--accent); }
+
+  /* ---------- Hierarchy: per-agent request/response exchange ---------- */
+  /* A request/response pair, indented one level under the base (framing) rows. */
+  .texchange {
+    margin: 0 0 12px 24px;
+    padding-left: 14px;
+    border-left: 2px solid var(--line-soft);
+    animation: rise .25s ease both;
+  }
+  .texchange--orphan { border-left-color: var(--st-failed); }
+  .thop { margin-bottom: 8px; }
+  .thop:last-child { margin-bottom: 0; }
+  /* The response nests under its request via extra indent + its own left border,
+     so the call/return relationship reads at a glance. */
+  .thop--response {
+    margin-left: 16px;
+    padding-left: 12px;
+    border-left: 2px solid var(--line-soft);
+  }
+
+  /* ---------- Drill-down detail (expand on row click) ---------- */
+  .tdetail {
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px dashed var(--line-soft);
+  }
+  .tdetail-fields {
+    display: grid; grid-template-columns: auto 1fr; gap: 4px 12px;
+    font-size: 11px; margin-bottom: 8px;
+  }
+  .tdetail-key { color: var(--text-faint); text-transform: uppercase; letter-spacing: .4px; }
+  .tdetail-val { color: var(--text); word-break: break-all; }
+  .tdetail-json {
+    margin: 0; padding: 9px 11px; background: var(--bg);
+    border: 1px solid var(--line-soft); border-radius: 8px;
+    font-size: 11px; line-height: 1.5; color: var(--text-dim);
+    max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  }
 
   /* scrollbars */
   ::-webkit-scrollbar { width: 9px; }
@@ -292,7 +376,7 @@
         <div class="big">◇</div>
         Send a message to watch the agents<br/>negotiate over the A2A bus.
       </div>
-      <div class="timeline" id="timeline" style="display:none"></div>
+      <div id="runs" style="display:none"></div>
     </div>
   </section>
 </div>
@@ -304,7 +388,8 @@
   var chat = document.getElementById("chat");
   var input = document.getElementById("input");
   var sendBtn = document.getElementById("send");
-  var timeline = document.getElementById("timeline");
+  var runsEl = document.getElementById("runs");
+  var timeline = null; // the current run's envelope tree; (re)created per run section
   var traceEmpty = document.getElementById("trace-empty");
   var traceScroll = document.getElementById("trace-scroll");
   var chatStatus = document.getElementById("chat-status");
@@ -328,9 +413,89 @@
   var typingEl = null;
   var currentCid = null;
 
+  // The Hermes/MyShopper orchestrator name used for every per-agent hop
+  // (hermes_myshopper -> agent for the request, agent -> hermes_myshopper for
+  // the response). Top-level framing envelopes (ACCEPTED/COMPLETED/FAILED) are
+  // always agentmart -> hermes and never involve this name.
+  var HERMES_MYSHOPPER = "hermes_myshopper";
+  // agent name -> queue of open <div class="texchange"> groups awaiting their
+  // response hop. FIFO per agent so parallel branches still pair correctly.
+  var pendingByAgent = {};
+
   function esc(s) {
     return String(s == null ? "" : s)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // Minimal, safe markdown -> HTML for Hermes/assistant replies only. The raw
+  // text is untrusted LLM output, so it is HTML-escaped FIRST via esc() and
+  // every regex below only ever operates on that already-escaped string —
+  // markdown punctuation (*, #, -, digits) survives esc() untouched, but a
+  // literal "<" or "&" in the reply is already inert entities by the time any
+  // tag gets built, so it can never inject real markup. This is intentionally
+  // a small inline formatter (bold/italic, #/##/### headings, "-"/"1." lists,
+  // paragraphs/line breaks) — not a full markdown parser, and not used for
+  // anything but the Hermes chat bubble.
+  function mdInline(s) {
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+    s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+    s = s.replace(/(^|[^\w])_([^_]+)_(?![\w])/g, "$1<em>$2</em>");
+    return s;
+  }
+
+  function mdToHtml(raw) {
+    var text = esc(raw); // escape untrusted text before any tag is introduced
+    var lines = text.split(/\r\n|\r|\n/);
+    var out = [];
+    var i = 0, n = lines.length;
+    var reHeading = /^(#{1,6})\s+(.*)$/;
+    var reBullet = /^\s*[-*]\s+/;
+    var reNumbered = /^\s*\d+[.)]\s+/;
+
+    while (i < n) {
+      var line = lines[i];
+
+      if (/^\s*$/.test(line)) { i++; continue; }
+
+      var h = line.match(reHeading);
+      if (h) {
+        var level = h[1].length;
+        out.push("<h" + level + ">" + mdInline(h[2].trim()) + "</h" + level + ">");
+        i++;
+        continue;
+      }
+
+      if (reBullet.test(line)) {
+        var items = [];
+        while (i < n && reBullet.test(lines[i])) {
+          items.push("<li>" + mdInline(lines[i].replace(reBullet, "")) + "</li>");
+          i++;
+        }
+        out.push("<ul>" + items.join("") + "</ul>");
+        continue;
+      }
+
+      if (reNumbered.test(line)) {
+        var oitems = [];
+        while (i < n && reNumbered.test(lines[i])) {
+          oitems.push("<li>" + mdInline(lines[i].replace(reNumbered, "")) + "</li>");
+          i++;
+        }
+        out.push("<ol>" + oitems.join("") + "</ol>");
+        continue;
+      }
+
+      var para = [];
+      while (i < n && !/^\s*$/.test(lines[i]) && !reHeading.test(lines[i]) &&
+             !reBullet.test(lines[i]) && !reNumbered.test(lines[i])) {
+        para.push(mdInline(lines[i]));
+        i++;
+      }
+      out.push("<p>" + para.join("<br>") + "</p>");
+    }
+
+    return out.join("") || "";
   }
 
   function scrollChat() { chat.scrollTop = chat.scrollHeight; }
@@ -349,9 +514,12 @@
     var wrap = document.createElement("div");
     wrap.className = "msg " + role;
     var avatar = role === "user" ? "You" : "H";
+    // Only Hermes/assistant text is markdown-formatted; the user's own
+    // messages are shown as plain (escaped) text, unchanged.
+    var bodyHtml = (role === "hermes") ? mdToHtml(text) : esc(text);
     wrap.innerHTML =
       '<div class="avatar">' + esc(avatar) + '</div>' +
-      '<div class="bubble">' + esc(text) + '</div>';
+      '<div class="bubble">' + bodyHtml + '</div>';
     chat.appendChild(wrap);
     scrollChat();
     return wrap;
@@ -399,10 +567,73 @@
     return "+" + secs.toFixed(1) + "s";
   }
 
-  function addTraceNode(env) {
-    traceEmpty.style.display = "none";
-    timeline.style.display = "block";
+  // Classify an envelope into where it belongs in the request/response hierarchy:
+  //  "framing"  - top-level agentmart <-> hermes envelopes (ACCEPTED/COMPLETED/FAILED)
+  //  "request"  - hermes_myshopper -> <agent> hop (the call)
+  //  "response" - <agent> -> hermes_myshopper hop (the return)
+  // Anything that doesn't match either shape falls back to "framing" so it still
+  // renders (at the base indent) instead of being dropped.
+  function classifyEnvelope(env) {
+    var sender = env.sender || "", recipient = env.recipient || "";
+    if (sender === HERMES_MYSHOPPER && recipient !== HERMES_MYSHOPPER) return "request";
+    if (recipient === HERMES_MYSHOPPER && sender !== HERMES_MYSHOPPER) return "response";
+    return "framing";
+  }
 
+  // Pretty-print a value for the drill-down JSON block; falls back to a plain
+  // string if it isn't JSON-serializable for some reason.
+  function prettyJson(value) {
+    try { return JSON.stringify(value === undefined ? null : value, null, 2); }
+    catch (err) { return String(value); }
+  }
+
+  function fieldRow(key, value) {
+    var shown = (value == null || value === "") ? "—" : value;
+    return '<div class="tdetail-key">' + esc(key) + '</div>' +
+      '<div class="tdetail-val">' + esc(shown) + '</div>';
+  }
+
+  // Full field set + pretty-printed payload for the expandable drill-down area.
+  function buildDetailHtml(env) {
+    var metrics = env.metrics && Object.keys(env.metrics).length ? prettyJson(env.metrics) : "—";
+    return (
+      '<div class="tdetail" hidden>' +
+        '<div class="tdetail-fields">' +
+          fieldRow("correlation_id", env.correlation_id) +
+          fieldRow("task_id", env.task_id) +
+          fieldRow("state", env.state) +
+          fieldRow("intent", env.intent) +
+          '<div class="tdetail-key">metrics</div>' +
+          '<div class="tdetail-val"><code>' + esc(metrics) + '</code></div>' +
+        '</div>' +
+        '<pre class="tdetail-json">' + esc(prettyJson(env.payload)) + '</pre>' +
+      '</div>'
+    );
+  }
+
+  // Wire up click + keyboard toggling for one card's drill-down area.
+  function wireExpand(cardEl) {
+    var header = cardEl.querySelector(".tcard-top");
+    var detail = cardEl.querySelector(".tdetail");
+    var chev = header.querySelector(".chev");
+    function toggle() {
+      var opening = detail.hasAttribute("hidden");
+      if (opening) { detail.removeAttribute("hidden"); } else { detail.setAttribute("hidden", ""); }
+      header.setAttribute("aria-expanded", opening ? "true" : "false");
+      if (chev) chev.classList.toggle("open", opening);
+    }
+    header.addEventListener("click", toggle);
+    header.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+  }
+
+  // Build one envelope's card (route, badge, intent, metrics, meta, drill-down),
+  // wrapped in a "tnode" (base level) or "thop" (nested request/response) element.
+  function buildEnvelopeCard(env, kind) {
     var state = env.state || "proposed";
     var dot = (getComputedStyle(document.documentElement)
       .getPropertyValue("--st-" + state) || "#7c86a0").trim();
@@ -438,20 +669,21 @@
     }
 
     var node = document.createElement("div");
-    node.className = "tnode";
+    node.className = (kind === "framing") ? "tnode" : ("thop thop--" + kind);
     node.style.setProperty("--dot", dot);
     node.innerHTML =
       '<div class="tcard">' +
-        '<div class="tcard-top">' +
+        '<div class="tcard-top" tabindex="0" role="button" aria-expanded="false">' +
+          '<span class="chev" aria-hidden="true">▸</span>' +
           '<span class="route">' + esc(sender) + '<span class="arrow">→</span>' + esc(recipient) + '</span>' +
           badgeFor(state) +
         '</div>' +
         (env.intent ? '<span class="intent">' + esc(env.intent) + '</span>' : '') +
         metricsHtml +
         metaHtml +
+        buildDetailHtml(env) +
       '</div>';
-    timeline.appendChild(node);
-    scrollTrace();
+    wireExpand(node);
 
     // running totals
     envCount += 1;
@@ -460,6 +692,45 @@
     elTokens.textContent = num(totalTokens);
     elElapsed.innerHTML = num(totalElapsed) + '<small> ms</small>';
     elEnvelopes.textContent = num(envCount);
+
+    return node;
+  }
+
+  // Render one envelope into the timeline: base level for framing envelopes,
+  // or nested one level under a per-agent exchange group for request/response
+  // hops, pairing the response under its request by agent name (FIFO per
+  // agent). A response with no pending request (e.g. it arrives out of order)
+  // still renders on its own rather than being dropped.
+  function addTraceNode(env) {
+    // `timeline` is the current run's own tree (see startRunSection); it is
+    // always freshly created and visible, so there's no display toggle here.
+    var kind = classifyEnvelope(env);
+    var card = buildEnvelopeCard(env, kind);
+
+    if (kind === "request") {
+      var group = document.createElement("div");
+      group.className = "texchange";
+      group.appendChild(card);
+      timeline.appendChild(group);
+      var agent = env.recipient || "";
+      (pendingByAgent[agent] = pendingByAgent[agent] || []).push(group);
+    } else if (kind === "response") {
+      var agentName = env.sender || "";
+      var queue = pendingByAgent[agentName];
+      var target;
+      if (queue && queue.length) {
+        target = queue.shift();
+      } else {
+        target = document.createElement("div");
+        target.className = "texchange texchange--orphan";
+        timeline.appendChild(target);
+      }
+      target.appendChild(card);
+    } else {
+      timeline.appendChild(card);
+    }
+
+    scrollTrace();
   }
 
   function addApprovalCard(env) {
@@ -476,7 +747,7 @@
       '<div class="bubble">' +
         '<div class="approval">' +
           '<div class="a-title">Confirmation required</div>' +
-          '<div class="a-body">' + esc(summary) + '</div>' +
+          '<div class="a-body">' + mdToHtml(summary) + '</div>' +
           '<div class="a-btns">' +
             '<button class="btn approve">Approve</button>' +
             '<button class="btn decline">Decline</button>' +
@@ -554,21 +825,43 @@
     setTraceStatus("Complete", "live");
   }
 
-  function resetTrace() {
-    timeline.innerHTML = "";
-    timeline.style.display = "none";
-    traceEmpty.style.display = "";
-    totalTokens = 0; totalElapsed = 0; envCount = 0;
-    stepNo = 0; firstTs = null;
-    elTokens.textContent = num(totalTokens);
-    elElapsed.innerHTML = num(totalElapsed) + '<small> ms</small>';
-    elEnvelopes.textContent = num(envCount);
+  // Start a new trace section for one customer message: a header with that
+  // message's text, followed by its own indented request/response tree
+  // underneath. Sections accumulate for the session (most recent at the
+  // bottom, matching the chat panel's order) instead of replacing each
+  // other, so earlier runs stay visible and scrollable above the latest one.
+  // Only the per-run pairing/timing state resets here — the header totals
+  // (tokens/elapsed/envelopes) keep accumulating across the whole session,
+  // since multiple runs' envelopes are now all visible at once.
+  function startRunSection(userText) {
+    stepNo = 0;
+    firstTs = null;
+    pendingByAgent = {};
+
+    traceEmpty.style.display = "none";
+    runsEl.style.display = "block";
+
+    var section = document.createElement("div");
+    section.className = "trun";
+    section.innerHTML =
+      '<div class="trun-head">' +
+        '<span class="trun-quote" aria-hidden="true">&ldquo;</span>' +
+        '<div class="trun-body">' +
+          '<div class="trun-label">Customer message</div>' +
+          '<div class="trun-msg"></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="timeline"></div>';
+    section.querySelector(".trun-msg").textContent = userText || "(no text)";
+    runsEl.appendChild(section);
+
+    timeline = section.querySelector(".timeline");
   }
 
-  function openStream(cid) {
+  function openStream(cid, userText) {
     currentCid = cid;
     replyRendered = false;
-    resetTrace();
+    startRunSection(userText);
     es = new EventSource("/events/" + encodeURIComponent(cid));
 
     es.onmessage = function (e) {
@@ -605,7 +898,7 @@
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (data && data.correlation_id) {
-          openStream(data.correlation_id);
+          openStream(data.correlation_id, text);
         } else {
           throw new Error("no correlation_id");
         }
