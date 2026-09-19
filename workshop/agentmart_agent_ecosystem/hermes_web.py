@@ -56,6 +56,7 @@ def _normalize_reply(reply, payload):
 class ChatIn(BaseModel):
     text: str
     customer_id: str = "CUST-1001"
+    conversation_id: str | None = None
 
 
 class ConfirmIn(BaseModel):
@@ -95,7 +96,12 @@ def create_app(core) -> FastAPI:
 
     @app.post("/chat")
     def chat(body: ChatIn):
-        cid = core.start_request(body.text, customer_id=body.customer_id, channel="web")
+        cid = core.start_request(
+            body.text,
+            customer_id=body.customer_id,
+            channel="web",
+            conversation_id=body.conversation_id,
+        )
         return {"correlation_id": cid}
 
     @app.get("/events/{cid}")
@@ -113,9 +119,12 @@ def create_app(core) -> FastAPI:
                 if env.get("sender") == "agentmart" and state in ("completed", "failed"):
                     payload = env.get("payload") or {}
                     if state == "completed":
-                        reply_str = _normalize_reply(payload.get("reply"), payload)
-                        safe, _violations = core.finalize_reply(reply_str)
+                        # Hermes-voice reply grounded only in AgentMart's result,
+                        # answering the customer's original question in context.
+                        safe, _violations = core.compose_reply(cid, payload)
                         env.setdefault("payload", {})["reply"] = safe
+                        pending = getattr(core, "_pending", {}).get(cid) or {}
+                        core.remember(pending.get("conversation_id"), pending.get("question"), safe)
                     else:  # failed
                         err = payload.get("error") or "Sorry, something went wrong while handling that request."
                         env.setdefault("payload", {})["reply"] = str(err)

@@ -455,6 +455,25 @@
   var typingEl = null;
   var currentCid = null;
 
+  // Stable per-browser conversation id so Hermes can keep short-term memory
+  // across messages (resolving follow-ups like "yes proceed" in context).
+  // Persisted in localStorage; regenerated only if storage is unavailable.
+  var CID_KEY = "myshopper_cid";
+  function makeUuid() {
+    if (window.crypto && crypto.randomUUID) { return crypto.randomUUID(); }
+    return "cid-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+  }
+  var conversationId;
+  try {
+    conversationId = localStorage.getItem(CID_KEY);
+    if (!conversationId) {
+      conversationId = makeUuid();
+      localStorage.setItem(CID_KEY, conversationId);
+    }
+  } catch (err) {
+    conversationId = makeUuid();
+  }
+
   // The Hermes/MyShopper orchestrator name used for every per-agent hop
   // (hermes_myshopper -> agent for the request, agent -> hermes_myshopper for
   // the response). Top-level framing envelopes (ACCEPTED/COMPLETED/FAILED) are
@@ -949,7 +968,7 @@
     fetch("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text, customer_id: "CUST-1001" })
+      body: JSON.stringify({ text: text, customer_id: "CUST-1001", conversation_id: conversationId })
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {

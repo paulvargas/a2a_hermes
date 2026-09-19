@@ -24,12 +24,16 @@ class FakeCore:
     def __init__(self, events=None):
         self.start_request_calls = []
         self.confirm_calls = []
+        self.remember_calls = []
         self.events = events or []
+        self._pending = {}
 
-    def start_request(self, text, customer_id="CUST-1001", channel="web"):
+    def start_request(self, text, customer_id="CUST-1001", channel="web", conversation_id=None):
         self.start_request_calls.append(
-            {"text": text, "customer_id": customer_id, "channel": channel}
+            {"text": text, "customer_id": customer_id, "channel": channel,
+             "conversation_id": conversation_id}
         )
+        self._pending["cid-1"] = {"conversation_id": conversation_id, "question": text}
         return "cid-1"
 
     def stream_events(self, correlation_id, timeout_ms=120000):
@@ -39,14 +43,22 @@ class FakeCore:
     def finalize_reply(self, reply_text):
         return reply_text, []
 
+    def compose_reply(self, cid, payload):
+        from hermes_telegram import _normalize_reply
+        return _normalize_reply((payload or {}).get("reply"), payload or {}), []
+
+    def remember(self, conversation_id, user_text, assistant_reply):
+        self.remember_calls.append((conversation_id, user_text, assistant_reply))
+
     def confirm(self, correlation_id, task_id, approved):
         self.confirm_calls.append((correlation_id, task_id, approved))
 
 
-def _fake_update(text):
+def _fake_update(text, chat_id=555):
     update = MagicMock()
     update.message.text = text
     update.message.reply_text = AsyncMock()
+    update.effective_chat.id = chat_id
     return update
 
 
@@ -67,7 +79,8 @@ def test_handle_message_calls_start_request_with_message_text():
     asyncio.run(handle_message(update, context))
 
     assert core.start_request_calls == [
-        {"text": "find wireless earbuds under $120", "customer_id": "CUST-1001", "channel": "telegram"}
+        {"text": "find wireless earbuds under $120", "customer_id": "CUST-1001",
+         "channel": "telegram", "conversation_id": "555"}
     ]
 
 

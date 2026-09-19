@@ -181,9 +181,13 @@ async def _handle_envelope(message, core, env: dict, seen_senders: set, bot_data
     is_terminal_frame = env.get("sender") == "agentmart" and state in _TERMINAL_STATES
 
     if is_terminal_frame and state == "completed":
-        reply_str = _normalize_reply(payload.get("reply"), payload)
-        safe, _violations = core.finalize_reply(reply_str)
+        # Hermes-voice reply grounded only in AgentMart's result, answering the
+        # customer's original question in the context of this chat.
+        cid = env.get("correlation_id")
+        safe, _violations = core.compose_reply(cid, payload)
         await _send_text(message, safe)
+        pending = getattr(core, "_pending", {}).get(cid) or {}
+        core.remember(pending.get("conversation_id"), pending.get("question"), safe)
         return
 
     if is_terminal_frame and state == "failed":
@@ -205,7 +209,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     customer_id = context.bot_data.get("customer_id", DEFAULT_CUSTOMER_ID)
-    cid = core.start_request(text, customer_id=customer_id, channel="telegram")
+    # One conversation per Telegram chat, so context/memory is scoped to the chat.
+    conversation_id = str(update.effective_chat.id)
+    cid = core.start_request(
+        text, customer_id=customer_id, channel="telegram", conversation_id=conversation_id
+    )
 
     message = update.message
     bot_data = context.bot_data

@@ -1,13 +1,21 @@
 import fakeredis
 from fastapi.testclient import TestClient
 from a2a_bus import A2ABus
+from agentmart_ecosystem import OpenRouterHermesClient
 from hermes_core import HermesCore
 from hermes_web import create_app
 
 
+def _offline_core(bus):
+    """HermesCore whose LLM is a dry-run client, so compose_reply/_resolve take
+    the deterministic fallback path with no network (mirrors production wiring
+    but keeps these tests hermetic even when a real key is in .env)."""
+    return HermesCore(bus=bus, llm=OpenRouterHermesClient(dry_run=True))
+
+
 def _client():
     bus = A2ABus(client=fakeredis.FakeStrictRedis(decode_responses=True))
-    app = create_app(HermesCore(bus=bus))
+    app = create_app(_offline_core(bus))
     return TestClient(app)
 
 
@@ -39,7 +47,7 @@ def test_events_stream_grounds_completed_reply():
     """A completed reply containing an invented SKU must be redacted in the
     streamed SSE frame (grounding via core.finalize_reply is wired)."""
     bus = A2ABus(client=fakeredis.FakeStrictRedis(decode_responses=True))
-    core = HermesCore(bus=bus)
+    core = _offline_core(bus)
     client = TestClient(create_app(core))
     cid = "cid-ground-1"
     completed = {
@@ -77,6 +85,7 @@ class _FakeStreamCore:
 
     def __init__(self, events):
         self._events = events
+        self._pending = {}
 
     def stream_events(self, correlation_id, timeout_ms=120000):
         for env in self._events:
@@ -84,6 +93,13 @@ class _FakeStreamCore:
 
     def finalize_reply(self, reply_text):
         return reply_text, []
+
+    def compose_reply(self, cid, payload):
+        from hermes_web import _normalize_reply
+        return _normalize_reply((payload or {}).get("reply"), payload or {}), []
+
+    def remember(self, *args, **kwargs):
+        pass
 
 
 def test_events_stream_ignores_agent_hop_completed_uses_terminal_transcript():
@@ -124,7 +140,7 @@ def test_events_stream_normalizes_list_reply():
     """When the worker emits reply as a 1-element transcript list, the stream
     must still surface a human-readable string (item 2 regression guard)."""
     bus = A2ABus(client=fakeredis.FakeStrictRedis(decode_responses=True))
-    core = HermesCore(bus=bus)
+    core = _offline_core(bus)
     client = TestClient(create_app(core))
     cid = "cid-list-1"
     completed = {
