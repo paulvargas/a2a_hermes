@@ -153,6 +153,11 @@ python hermes_web.py
 python hermes_telegram.py   # optional, needs TELEGRAM_BOT_TOKEN
 ```
 
+**Shortcut:** `python dev_server.py` runs the worker **and** the web app together in
+one process (serving http://localhost:8000), so you only need Redis plus, optionally,
+`python hermes_telegram.py` for the Telegram channel. This is what the editor's
+"dev server" preview launches.
+
 Verify the model is reachable before a full run:
 
 ```bash

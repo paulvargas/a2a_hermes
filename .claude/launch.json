@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "myshopper-web",
+      "runtimeExecutable": "workshop/agentmart_agent_ecosystem/.venv/Scripts/python.exe",
+      "runtimeArgs": ["workshop/agentmart_agent_ecosystem/dev_server.py"],
+      "port": 8000
+    }
+  ]
+}

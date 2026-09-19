@@ -11,3 +11,6 @@ __pycache__/
 keyvault.env
 *.key
 a2a_audit.jsonl
+
+# Internal agent workspace
+.superpowers/
