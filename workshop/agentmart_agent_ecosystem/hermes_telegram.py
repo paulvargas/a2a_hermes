@@ -313,7 +313,10 @@ def main() -> None:
     core = HermesCore(bus=A2ABus(client=client))
     application = build_application(core, token)
     logger.info("Hermes Telegram adapter starting long polling")
-    application.run_polling()
+    # drop_pending_updates: on (re)start, discard any messages queued while the
+    # bot was offline instead of replaying/answering the whole backlog at once
+    # (which looked like the bot "repeating" answers).
+    application.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
